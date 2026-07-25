@@ -63,7 +63,7 @@ The frontend serves as the visual app interface, offering ad-free streaming and 
    ```bash
    flutter run
    ```
-
+(you will need to enable developers mode on the device you tend to install this app on --adb platform tools required --if flutter run doesnt work explicitly mentin device name --to fetch device name type flutter devices ,then get the device name and run command as flutter run -d YourDevicename)
 ---
 
 ## ⚠️ Troubleshooting
