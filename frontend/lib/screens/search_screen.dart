@@ -13,6 +13,7 @@ import '../providers/server_provider.dart';
 import '../screens/player_screen.dart';
 import '../widgets/featured_playlists_section.dart';
 import '../widgets/mini_player.dart';
+import '../widgets/recently_played_section.dart';   // ← NEW
 import '../widgets/server_status_badge.dart';
 
 class SearchScreen extends StatefulWidget {
@@ -26,7 +27,7 @@ class _SearchScreenState extends State<SearchScreen> {
   final _ctrl      = TextEditingController();
   final _focusNode = FocusNode();
   Timer? _debounce;
-  bool _searchActive = false; // true when user has typed something
+  bool _searchActive = false;
 
   @override
   void dispose() {
@@ -155,8 +156,7 @@ class _SearchScreenState extends State<SearchScreen> {
               onSubmitted: _onChanged,
               decoration: InputDecoration(
                 hintText: 'Artist, song, album…',
-                prefixIcon:
-                    const Icon(Icons.search_rounded, size: 20),
+                prefixIcon: const Icon(Icons.search_rounded, size: 20),
                 suffixIcon: _searchActive
                     ? IconButton(
                         icon: const Icon(Icons.clear, size: 18),
@@ -168,7 +168,7 @@ class _SearchScreenState extends State<SearchScreen> {
           ),
           const SizedBox(height: 12),
 
-          // ── Body: featured playlists OR search results ────────────────
+          // ── Body: featured playlists OR search results ─────────────────
           Expanded(
             child: _searchActive
                 ? _SearchResults(onDownload: _download, onStream: _stream)
@@ -182,7 +182,7 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 }
 
-// ── Browse view (featured playlists) ─────────────────────────────────────────
+// ── Browse view ───────────────────────────────────────────────────────────────
 
 class _BrowseView extends StatelessWidget {
   @override
@@ -191,6 +191,7 @@ class _BrowseView extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: const [
+          RecentlyPlayedSection(),   // ← NEW: shows above featured playlists
           FeaturedPlaylistsSection(),
         ],
       ),
@@ -228,8 +229,7 @@ class _SearchResults extends StatelessWidget {
                         size: 40, color: cs.error.withOpacity(0.6)),
                     const SizedBox(height: 12),
                     Text(sp.error,
-                        style:
-                            tt.bodyMedium?.copyWith(color: cs.error),
+                        style: tt.bodyMedium?.copyWith(color: cs.error),
                         textAlign: TextAlign.center),
                   ],
                 ),
@@ -329,8 +329,7 @@ class _ResultTileState extends State<_ResultTile> {
           if (_queued)
             const Padding(
               padding: EdgeInsets.symmetric(horizontal: 6),
-              child: Icon(Icons.check_circle,
-                  color: Colors.green, size: 22),
+              child: Icon(Icons.check_circle, color: Colors.green, size: 22),
             )
           else
             IconButton(

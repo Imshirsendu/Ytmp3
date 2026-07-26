@@ -6,6 +6,7 @@ import 'providers/download_provider.dart';
 import 'providers/library_provider.dart';
 import 'providers/player_provider.dart';
 import 'providers/playlist_provider.dart';
+import 'providers/recently_played_provider.dart';
 import 'providers/search_provider.dart';
 import 'providers/server_provider.dart';
 import 'screens/main_shell.dart';
@@ -27,8 +28,17 @@ Future<void> main() async {
         ChangeNotifierProvider(create: (_) => SearchProvider()),
         ChangeNotifierProvider(create: (_) => PlayerProvider()),
         ChangeNotifierProvider(create: (_) => PlaylistProvider()),
+        ChangeNotifierProvider(create: (_) => RecentlyPlayedProvider()),
       ],
-      child: const YtMp3App(),
+      child: Builder(
+        builder: (ctx) {
+          // Wire RecentlyPlayedProvider into PlayerProvider once, after the
+          // provider tree is built.
+          ctx.read<PlayerProvider>()
+              .attachRecentlyPlayed(ctx.read<RecentlyPlayedProvider>());
+          return const YtMp3App();
+        },
+      ),
     ),
   );
 }

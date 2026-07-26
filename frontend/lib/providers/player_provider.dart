@@ -1,9 +1,11 @@
 import 'dart:math';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:just_audio/just_audio.dart';
 
 import '../models/search_result.dart';
 import '../models/track.dart';
+import 'recently_played_provider.dart';
 
 // ── StreamTrack ──────────────────────────────────────────────────────────────
 
@@ -53,13 +55,20 @@ class PlayerProvider extends ChangeNotifier {
 
   // Local queue (Track objects)
   List<Track> _queue          = [];
-  List<int>   _shuffleOrder   = []; // indices into _queue
-  int         _queueIndex     = 0;  // index into _shuffleOrder (or _queue if not shuffled)
+  List<int>   _shuffleOrder   = [];
+  int         _queueIndex     = 0;
 
   // Modes
   bool        _shuffle  = false;
   AppLoopMode _loop     = AppLoopMode.none;
   bool        _loading  = false;
+
+  // Recently played
+  RecentlyPlayedProvider? _recentlyPlayed;
+
+  void attachRecentlyPlayed(RecentlyPlayedProvider rp) {
+    _recentlyPlayed = rp;
+  }
 
   // ── Getters ─────────────────────────────────────────────────────────────
 
@@ -73,7 +82,6 @@ class PlayerProvider extends ChangeNotifier {
   AppLoopMode  get loopMode       => _loop;
   int          get queueIndex     => _queueIndex;
 
-  /// The queue in current playback order (respects shuffle).
   List<Track> get queue {
     if (_shuffle && _shuffleOrder.isNotEmpty) {
       return _shuffleOrder.map((i) => _queue[i]).toList();
@@ -81,7 +89,6 @@ class PlayerProvider extends ChangeNotifier {
     return List.unmodifiable(_queue);
   }
 
-  /// Index of the currently playing track inside the ordered queue.
   int get currentOrderedIndex => _queueIndex;
 
   Stream<Duration>    get positionStream    => _player.positionStream;
@@ -124,7 +131,6 @@ class PlayerProvider extends ChangeNotifier {
     await _loadLocalAt(_queueIndex);
   }
 
-  /// Add a track to play immediately after the current one.
   void playNext(Track track) {
     final insertAt = _queueIndex + 1;
     _queue.insert(insertAt, track);
@@ -132,7 +138,6 @@ class PlayerProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Add a track to the end of the queue.
   void addToQueue(Track track) {
     _queue.add(track);
     if (_shuffle) _shuffleOrder.add(_queue.length - 1);
@@ -156,6 +161,7 @@ class PlayerProvider extends ChangeNotifier {
     try {
       await _player.setFilePath(track.filePath);
       await _player.play();
+      _logTrack(track); // ← log after successful playback starts
     } catch (_) {
       if (_queue.length > 1) await skipNext();
     } finally {
@@ -174,6 +180,7 @@ class PlayerProvider extends ChangeNotifier {
     try {
       await _player.setUrl(st.streamUrl);
       await _player.play();
+      _logStream(st); // ← log after successful playback starts
     } catch (e) {
       debugPrint('Stream playback error: $e');
     } finally {
@@ -247,6 +254,25 @@ class PlayerProvider extends ChangeNotifier {
     } else if (hasNext) {
       skipNext();
     }
+  }
+
+  // ── Recently played helpers ───────────────────────────────────────────────
+
+  void _logTrack(Track track) {
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      _recentlyPlayed?.logTrack(track);
+    });
+  }
+
+  void _logStream(StreamTrack st) {
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      _recentlyPlayed?.logStream(StreamTrackInfo(
+        youtubeUrl:   st.youtubeUrl,
+        title:        st.title,
+        artist:       st.artist,
+        thumbnailUrl: st.thumbnailUrl,
+      ));
+    });
   }
 
   @override
