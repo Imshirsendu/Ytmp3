@@ -233,13 +233,14 @@ async def search_youtube(
         for entry in (info.get("entries") or []):
             if not entry:
                 continue
+            video_id = entry.get("id")
             results.append({
-                "id":        entry.get("id"),
+                "id":        video_id,
                 "title":     entry.get("title"),
                 "uploader":  entry.get("uploader") or entry.get("channel"),
                 "duration":  entry.get("duration"),
                 "thumbnail": entry.get("thumbnail"),
-                "url":       entry.get("url") or f"https://www.youtube.com/watch?v={entry.get('id')}",
+                "url":       f"https://www.youtube.com/watch?v={video_id}",
             })
 
         return {"query": q, "results": results}
