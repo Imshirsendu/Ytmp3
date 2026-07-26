@@ -45,42 +45,73 @@ class NowPlaying {
 
 enum AppLoopMode { none, one, all }
 
+// ── Equalizer presets ────────────────────────────────────────────────────────
+
+enum EqPreset { flat, bassBoost, vocal }
+
+extension EqPresetLabel on EqPreset {
+  String get label => switch (this) {
+        EqPreset.flat      => 'Flat',
+        EqPreset.bassBoost => 'Bass Boost',
+        EqPreset.vocal     => 'Vocal',
+      };
+
+  String get emoji => switch (this) {
+        EqPreset.flat      => '〰️',
+        EqPreset.bassBoost => '🔊',
+        EqPreset.vocal     => '🎤',
+      };
+}
+
+/// dB gains per preset for a 5-band EQ: 60Hz, 230Hz, 910Hz, 3.6kHz, 14kHz
+const _presetGains = {
+  EqPreset.flat:      [0.0,  0.0,  0.0,  0.0,  0.0],
+  EqPreset.bassBoost: [8.0,  5.0,  0.0, -2.0, -3.0],
+  EqPreset.vocal:     [-2.0, 0.0,  5.0,  6.0,  3.0],
+};
+
 // ── PlayerProvider ───────────────────────────────────────────────────────────
 
 class PlayerProvider extends ChangeNotifier {
-  final _player = AudioPlayer();
-  final _rng    = Random();
+  final _rng = Random();
+
+  // Equalizer chain — Android only
+  AndroidEqualizer?       _equalizer;
+  AndroidLoudnessEnhancer? _loudness;
+  late final AudioPlayer  _player;
+
+  EqPreset _eqPreset = EqPreset.flat;
+  bool     _eqReady  = false;
 
   NowPlaying? _current;
 
-  // Local queue (Track objects)
-  List<Track> _queue          = [];
-  List<int>   _shuffleOrder   = [];
-  int         _queueIndex     = 0;
+  List<Track> _queue        = [];
+  List<int>   _shuffleOrder = [];
+  int         _queueIndex   = 0;
 
-  // Modes
-  bool        _shuffle  = false;
-  AppLoopMode _loop     = AppLoopMode.none;
-  bool        _loading  = false;
+  bool        _shuffle = false;
+  AppLoopMode _loop    = AppLoopMode.none;
+  bool        _loading = false;
 
-  // Recently played
   RecentlyPlayedProvider? _recentlyPlayed;
 
   void attachRecentlyPlayed(RecentlyPlayedProvider rp) {
     _recentlyPlayed = rp;
   }
 
-  // ── Getters ─────────────────────────────────────────────────────────────
+  // ── Getters ──────────────────────────────────────────────────────────────
 
-  NowPlaying?  get current        => _current;
-  Track?       get currentTrack   => _current?.local;
-  bool         get loading        => _loading;
-  bool         get playing        => _player.playing;
-  Duration     get position       => _player.position;
-  Duration     get duration       => _player.duration ?? Duration.zero;
-  bool         get shuffle        => _shuffle;
-  AppLoopMode  get loopMode       => _loop;
-  int          get queueIndex     => _queueIndex;
+  NowPlaying?  get current   => _current;
+  Track?       get currentTrack => _current?.local;
+  bool         get loading   => _loading;
+  bool         get playing   => _player.playing;
+  Duration     get position  => _player.position;
+  Duration     get duration  => _player.duration ?? Duration.zero;
+  bool         get shuffle   => _shuffle;
+  AppLoopMode  get loopMode  => _loop;
+  int          get queueIndex => _queueIndex;
+  EqPreset     get eqPreset  => _eqPreset;
+  bool         get eqReady   => _eqReady;
 
   List<Track> get queue {
     if (_shuffle && _shuffleOrder.isNotEmpty) {
@@ -104,17 +135,57 @@ class PlayerProvider extends ChangeNotifier {
     return _queueIndex < _queue.length - 1;
   }
 
-  // ── Constructor ──────────────────────────────────────────────────────────
+  // ── Constructor ───────────────────────────────────────────────────────────
 
   PlayerProvider() {
+    _initPlayer();
+  }
+
+  Future<void> _initPlayer() async {
+    try {
+      _equalizer = AndroidEqualizer();
+      _loudness  = AndroidLoudnessEnhancer();
+      _player = AudioPlayer(
+        audioPipeline: AudioPipeline(
+          androidAudioEffects: [_loudness!, _equalizer!],
+        ),
+      );
+      _eqReady = true;
+    } catch (_) {
+      // Non-Android or unsupported — fall back to plain player
+      _equalizer = null;
+      _loudness  = null;
+      _player    = AudioPlayer();
+    }
+
     _player.playerStateStream.listen((_) => notifyListeners());
     _player.positionStream.listen((_) => notifyListeners());
     _player.processingStateStream.listen((state) {
       if (state == ProcessingState.completed) _onTrackComplete();
     });
+
+    notifyListeners();
   }
 
-  // ── Local playback ───────────────────────────────────────────────────────
+  // ── Equalizer API ─────────────────────────────────────────────────────────
+
+  Future<void> setEqPreset(EqPreset preset) async {
+    _eqPreset = preset;
+    notifyListeners();
+    if (_equalizer == null) return;
+    try {
+      final params = await _equalizer!.parameters;
+      final bands  = params.bands;
+      final gains  = _presetGains[preset]!;
+      for (var i = 0; i < bands.length && i < gains.length; i++) {
+        await bands[i].setGain(gains[i]);
+      }
+    } catch (e) {
+      debugPrint('EQ setPreset error: $e');
+    }
+  }
+
+  // ── Local playback ────────────────────────────────────────────────────────
 
   Future<void> playTrack(Track track) async {
     _queue      = [track];
@@ -161,7 +232,7 @@ class PlayerProvider extends ChangeNotifier {
     try {
       await _player.setFilePath(track.filePath);
       await _player.play();
-      _logTrack(track); // ← log after successful playback starts
+      _logTrack(track);
     } catch (_) {
       if (_queue.length > 1) await skipNext();
     } finally {
@@ -170,7 +241,7 @@ class PlayerProvider extends ChangeNotifier {
     }
   }
 
-  // ── Online stream playback ───────────────────────────────────────────────
+  // ── Online stream playback ────────────────────────────────────────────────
 
   Future<void> playStream(StreamTrack st) async {
     _queue   = [];
@@ -180,7 +251,7 @@ class PlayerProvider extends ChangeNotifier {
     try {
       await _player.setUrl(st.streamUrl);
       await _player.play();
-      _logStream(st); // ← log after successful playback starts
+      _logStream(st);
     } catch (e) {
       debugPrint('Stream playback error: $e');
     } finally {
@@ -189,7 +260,7 @@ class PlayerProvider extends ChangeNotifier {
     }
   }
 
-  // ── Controls ─────────────────────────────────────────────────────────────
+  // ── Controls ──────────────────────────────────────────────────────────────
 
   Future<void> togglePlayPause() async =>
       _player.playing ? await _player.pause() : await _player.play();
@@ -198,13 +269,11 @@ class PlayerProvider extends ChangeNotifier {
 
   Future<void> skipNext() async {
     if (_current?.isStream == true) return;
-
     if (_loop == AppLoopMode.one) {
       await _player.seek(Duration.zero);
       await _player.play();
       return;
     }
-
     if (_queueIndex < _queue.length - 1) {
       _queueIndex++;
       await _loadLocalAt(_queueIndex);
@@ -227,9 +296,7 @@ class PlayerProvider extends ChangeNotifier {
 
   void toggleShuffle() {
     _shuffle = !_shuffle;
-    if (_shuffle) {
-      _rebuildShuffleOrder(startAt: _queueIndex);
-    }
+    if (_shuffle) _rebuildShuffleOrder(startAt: _queueIndex);
     notifyListeners();
   }
 
@@ -256,7 +323,7 @@ class PlayerProvider extends ChangeNotifier {
     }
   }
 
-  // ── Recently played helpers ───────────────────────────────────────────────
+  // ── Recently played ───────────────────────────────────────────────────────
 
   void _logTrack(Track track) {
     SchedulerBinding.instance.addPostFrameCallback((_) {
@@ -277,6 +344,8 @@ class PlayerProvider extends ChangeNotifier {
 
   @override
   void dispose() {
+    _equalizer?.release();
+    _loudness?.release();
     _player.dispose();
     super.dispose();
   }

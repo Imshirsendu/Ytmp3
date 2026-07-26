@@ -2,6 +2,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:provider/provider.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../providers/player_provider.dart';
 import '../screens/queue_screen.dart';
@@ -42,6 +43,34 @@ class PlayerScreen extends StatelessWidget {
             style: tt.labelSmall?.copyWith(letterSpacing: 2)),
         centerTitle: true,
         actions: [
+          // ── Share button ─────────────────────────────────────────────
+          Consumer<PlayerProvider>(
+            builder: (ctx, player, _) {
+              final now = player.current;
+              if (now == null) return const SizedBox.shrink();
+              final url = now.isStream
+                  ? now.stream!.youtubeUrl
+                  : null; // local tracks don't have a URL to share
+              if (url == null) return const SizedBox.shrink();
+              return IconButton(
+                icon: const Icon(Icons.share_outlined),
+                tooltip: 'Share',
+                onPressed: () => Share.share(
+                  '🎵 ${now.title} — ${now.artist}\n$url',
+                  subject: now.title,
+                ),
+              );
+            },
+          ),
+          // ── Equalizer button ─────────────────────────────────────────
+          Consumer<PlayerProvider>(
+            builder: (ctx, player, _) => IconButton(
+              icon: const Icon(Icons.equalizer_rounded),
+              tooltip: 'Equalizer',
+              onPressed: () => _EqSheet.show(context),
+            ),
+          ),
+          // ── Queue button ─────────────────────────────────────────────
           Consumer<PlayerProvider>(
             builder: (ctx, player, _) =>
                 !player.current!.isStream && player.queue.isNotEmpty
@@ -91,8 +120,7 @@ class PlayerScreen extends StatelessWidget {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(now.title,
-                                style: tt.titleMedium
-                                    ?.copyWith(fontSize: 18),
+                                style: tt.titleMedium?.copyWith(fontSize: 18),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis),
                             const SizedBox(height: 4),
@@ -125,6 +153,17 @@ class PlayerScreen extends StatelessWidget {
                           ],
                         ),
                       ),
+                      // ── Share for local tracks (share file) ──────────
+                      if (!now.isStream)
+                        IconButton(
+                          icon: Icon(Icons.share_outlined,
+                              color: cs.onSurface.withOpacity(0.5), size: 20),
+                          tooltip: 'Share',
+                          onPressed: () => Share.shareXFiles(
+                            [XFile(now.local!.filePath)],
+                            subject: now.title,
+                          ),
+                        ),
                     ],
                   ),
 
@@ -151,8 +190,7 @@ class PlayerScreen extends StatelessWidget {
                               inactiveTrackColor:
                                   cs.onSurface.withOpacity(0.15),
                               thumbColor: cs.primary,
-                              overlayShape:
-                                  SliderComponentShape.noOverlay,
+                              overlayShape: SliderComponentShape.noOverlay,
                             ),
                             child: Slider(
                               value: ratio,
@@ -180,24 +218,20 @@ class PlayerScreen extends StatelessWidget {
 
                   const SizedBox(height: 16),
 
-                  // ── Shuffle / Loop row (local only) ──────────────────
+                  // ── Shuffle / Loop (local only) ──────────────────────
                   if (!now.isStream)
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        // Shuffle
                         IconButton(
-                          icon: Icon(
-                            Icons.shuffle_rounded,
-                            color: player.shuffle
-                                ? cs.primary
-                                : cs.onSurface.withOpacity(0.4),
-                          ),
+                          icon: Icon(Icons.shuffle_rounded,
+                              color: player.shuffle
+                                  ? cs.primary
+                                  : cs.onSurface.withOpacity(0.4)),
                           onPressed: player.toggleShuffle,
                           tooltip: 'Shuffle',
                         ),
                         const Spacer(),
-                        // Loop
                         IconButton(
                           icon: Icon(
                             player.loopMode == AppLoopMode.one
@@ -244,9 +278,7 @@ class PlayerScreen extends StatelessWidget {
                           const SizedBox(width: 16),
 
                           GestureDetector(
-                            onTap: isLoading
-                                ? null
-                                : player.togglePlayPause,
+                            onTap: isLoading ? null : player.togglePlayPause,
                             child: Container(
                               width: 68,
                               height: 68,
@@ -327,5 +359,137 @@ class PlayerScreen extends StatelessWidget {
     final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
     final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
     return '${d.inHours > 0 ? '${d.inHours}:' : ''}$m:$s';
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Equalizer bottom sheet
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _EqSheet extends StatelessWidget {
+  const _EqSheet();
+
+  static void show(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1A1A2E),
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (_) => ChangeNotifierProvider.value(
+        value: context.read<PlayerProvider>(),
+        child: const _EqSheet(),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs     = Theme.of(context).colorScheme;
+    final tt     = Theme.of(context).textTheme;
+    final player = context.watch<PlayerProvider>();
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 20, 24, 32),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Handle
+          Center(
+            child: Container(
+              width: 36, height: 4,
+              decoration: BoxDecoration(
+                color: cs.onSurface.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          Text('Equalizer', style: tt.titleMedium),
+          const SizedBox(height: 4),
+          Text(
+            player.eqReady
+                ? 'Android hardware EQ active'
+                : 'EQ unavailable on this device',
+            style: tt.labelSmall,
+          ),
+          const SizedBox(height: 20),
+
+          // Preset chips
+          Row(
+            children: EqPreset.values.map((preset) {
+              final active = player.eqPreset == preset;
+              return Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: GestureDetector(
+                    onTap: () => player.setEqPreset(preset),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      decoration: BoxDecoration(
+                        color: active
+                            ? cs.primary
+                            : cs.onSurface.withOpacity(0.07),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: active
+                              ? cs.primary
+                              : cs.onSurface.withOpacity(0.12),
+                        ),
+                      ),
+                      child: Column(
+                        children: [
+                          Text(preset.emoji,
+                              style: const TextStyle(fontSize: 20)),
+                          const SizedBox(height: 6),
+                          Text(
+                            preset.label,
+                            style: tt.labelSmall?.copyWith(
+                              color: active
+                                  ? cs.onPrimary
+                                  : cs.onSurface.withOpacity(0.7),
+                              fontWeight: active
+                                  ? FontWeight.w600
+                                  : FontWeight.normal,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+
+          if (!player.eqReady) ...[
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: cs.onSurface.withOpacity(0.05),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.info_outline_rounded,
+                      size: 16, color: cs.onSurface.withOpacity(0.4)),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Equalizer requires Android. Preset selection is saved for when it becomes available.',
+                      style: tt.labelSmall,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
   }
 }
