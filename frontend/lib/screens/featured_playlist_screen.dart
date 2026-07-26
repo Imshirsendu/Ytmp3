@@ -106,6 +106,25 @@ class _FeaturedPlaylistScreenState extends State<FeaturedPlaylistScreen> {
     await _streamTrack(results.first);
   }
 
+  void _downloadAll() {
+    if (_tracks.isEmpty) return;
+    int enqueued = 0;
+    for (final result in _tracks) {
+      if (_downloaded.contains(result.id)) continue;
+      _downloadTrack(result);
+      enqueued++;
+    }
+    if (enqueued == 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('All tracks already downloaded')),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Downloading $enqueued tracks…')),
+      );
+    }
+  }
+
   void _downloadTrack(SearchResult result) {
     final server = context.read<ServerProvider>();
     context.read<DownloadProvider>().enqueue(
@@ -169,6 +188,17 @@ class _FeaturedPlaylistScreenState extends State<FeaturedPlaylistScreen> {
                         side: BorderSide(color: cs.primary),
                       ),
                     ),
+                  ),
+                  const SizedBox(width: 10),
+                  OutlinedButton(
+                    onPressed: _downloadAll,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: cs.secondary,
+                      side: BorderSide(color: cs.secondary),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 14),
+                    ),
+                    child: const Icon(Icons.download_rounded, size: 20),
                   ),
                 ],
               ),
