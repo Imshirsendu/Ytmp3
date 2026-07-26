@@ -76,6 +76,9 @@ def _build_ydl_opts(out_tmpl: str) -> dict:
         "quiet": True,
         "no_warnings": True,
         "socket_timeout": 30,
+        "extractor_args": {
+            "youtube": {"player_client": ["android_vr"]},
+        },
         "postprocessors": [
             {
                 "key": "FFmpegExtractAudio",
@@ -157,6 +160,9 @@ def _get_stream_url(url: str) -> dict:
         "no_warnings": True,
         "skip_download": True,
         "socket_timeout": 20,
+        "extractor_args": {
+            "youtube": {"player_client": ["android_vr"]},
+        },
     }
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=False)
@@ -215,6 +221,9 @@ async def search_youtube(
         "no_warnings": True,
         "skip_download": True,
         "extract_flat": True,
+        "extractor_args": {
+            "youtube": {"player_client": ["android_vr"]},
+        },
     }
 
     try:
@@ -254,7 +263,14 @@ async def search_youtube(
 
 @app.get("/info", summary="Fetch video metadata without downloading")
 async def get_info(url: str = Query(..., description="YouTube video URL")):
-    opts = {"quiet": True, "no_warnings": True, "skip_download": True}
+    opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "skip_download": True,
+        "extractor_args": {
+            "youtube": {"player_client": ["android_vr"]},
+        },
+    }
     try:
         loop = asyncio.get_event_loop()
         def _extract():
