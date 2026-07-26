@@ -22,13 +22,11 @@ class FeaturedPlaylistScreen extends StatefulWidget {
 
 class _FeaturedPlaylistScreenState extends State<FeaturedPlaylistScreen> {
   final _dio = Dio();
-  List<SearchResult> _tracks  = [];
+  List<SearchResult> _tracks = [];
   bool _loading = true;
   String? _error;
 
-  // Track which songs are currently being streamed (loading indicator)
-  final _streaming = <String>{};
-  // Track which songs are queued for download
+  final _streaming  = <String>{};
   final _downloaded = <String>{};
 
   @override
@@ -55,7 +53,9 @@ class _FeaturedPlaylistScreenState extends State<FeaturedPlaylistScreen> {
       );
       final list = (res.data['results'] as List? ?? []);
       setState(() {
-        _tracks  = list.map((e) => SearchResult.fromJson(e as Map<String, dynamic>)).toList();
+        _tracks  = list
+            .map((e) => SearchResult.fromJson(e as Map<String, dynamic>))
+            .toList();
         _loading = false;
       });
     } catch (e) {
@@ -63,7 +63,8 @@ class _FeaturedPlaylistScreenState extends State<FeaturedPlaylistScreen> {
     }
   }
 
-  Future<void> _streamTrack(SearchResult result, {bool andOpenPlayer = true}) async {
+  Future<void> _streamTrack(SearchResult result,
+      {bool andOpenPlayer = true}) async {
     final server = context.read<ServerProvider>();
     final player = context.read<PlayerProvider>();
 
@@ -77,17 +78,20 @@ class _FeaturedPlaylistScreenState extends State<FeaturedPlaylistScreen> {
       final st = StreamTrack(
         youtubeUrl:   result.url,
         streamUrl:    data['stream_url'] as String,
-        title:        data['title'] as String? ?? result.title,
-        artist:       data['artist'] as String? ?? result.uploader,
+        title:        data['title']     as String? ?? result.title,
+        artist:       data['artist']    as String? ?? result.uploader,
         thumbnailUrl: data['thumbnail'] as String?,
-        duration:     Duration(seconds: (data['duration'] as num?)?.toInt() ?? 0),
+        duration: Duration(
+            seconds: (data['duration'] as num?)?.toInt() ?? 0),
       );
       await player.playStream(st);
       if (andOpenPlayer && context.mounted) PlayerScreen.show(context);
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Stream failed: $e'), backgroundColor: Colors.red),
+          SnackBar(
+              content: Text('Stream failed: $e'),
+              backgroundColor: Colors.red),
         );
       }
     } finally {
@@ -97,24 +101,32 @@ class _FeaturedPlaylistScreenState extends State<FeaturedPlaylistScreen> {
 
   Future<void> _playAll({bool shuffled = false}) async {
     if (_tracks.isEmpty) return;
-    final results = shuffled ? (List.from(_tracks)..shuffle()) : _tracks;
-    // Stream first track and open player
+    final results =
+        shuffled ? (List<SearchResult>.from(_tracks)..shuffle()) : _tracks;
     await _streamTrack(results.first);
   }
 
   void _downloadTrack(SearchResult result) {
     final server = context.read<ServerProvider>();
     context.read<DownloadProvider>().enqueue(
-      result.url,
-      server.downloadUrl(result.url),
-      title: result.title,
-    );
+          result.url,
+          server.downloadUrl(result.url),
+          title: result.title,
+        );
     setState(() => _downloaded.add(result.id));
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Downloading: ${result.title}',
-          maxLines: 1, overflow: TextOverflow.ellipsis)),
+      SnackBar(
+          content: Text('Downloading: ${result.title}',
+              maxLines: 1, overflow: TextOverflow.ellipsis)),
     );
   }
+
+  /// First 4 thumbnails used for the header collage
+  List<String> get _headerThumbnails => _tracks
+      .take(4)
+      .map((t) => t.thumbnail)
+      .whereType<String>()
+      .toList();
 
   @override
   Widget build(BuildContext context) {
@@ -126,13 +138,17 @@ class _FeaturedPlaylistScreenState extends State<FeaturedPlaylistScreen> {
       backgroundColor: const Color(0xFF0D0D1A),
       body: Column(
         children: [
-          // ── Header ────────────────────────────────────────────────────
-          _Header(playlist: pl, trackCount: _tracks.length),
+          // ── Header ──────────────────────────────────────────────────
+          _Header(
+            playlist:   pl,
+            trackCount: _tracks.length,
+            thumbnails: _headerThumbnails,
+          ),
 
-          // ── Action buttons ────────────────────────────────────────────
+          // ── Action buttons ───────────────────────────────────────────
           if (!_loading && _error == null && _tracks.isNotEmpty)
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
               child: Row(
                 children: [
                   Expanded(
@@ -158,24 +174,26 @@ class _FeaturedPlaylistScreenState extends State<FeaturedPlaylistScreen> {
               ),
             ),
 
-          // ── Track list ────────────────────────────────────────────────
+          // ── Track list ───────────────────────────────────────────────
           Expanded(
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
                 : _error != null
                     ? _ErrorState(error: _error!, onRetry: _fetchTracks)
                     : _tracks.isEmpty
-                        ? Center(child: Text('No tracks found', style: tt.bodyMedium))
+                        ? Center(
+                            child: Text('No tracks found',
+                                style: tt.bodyMedium))
                         : ListView.builder(
                             padding: const EdgeInsets.only(bottom: 100),
                             itemCount: _tracks.length,
                             itemBuilder: (ctx, i) => _TrackRow(
-                              index:      i + 1,
-                              result:     _tracks[i],
-                              isStreaming: _streaming.contains(_tracks[i].id),
+                              index:        i + 1,
+                              result:       _tracks[i],
+                              isStreaming:  _streaming.contains(_tracks[i].id),
                               isDownloaded: _downloaded.contains(_tracks[i].id),
-                              onStream:   () => _streamTrack(_tracks[i]),
-                              onDownload: () => _downloadTrack(_tracks[i]),
+                              onStream:     () => _streamTrack(_tracks[i]),
+                              onDownload:   () => _downloadTrack(_tracks[i]),
                             ),
                           ),
           ),
@@ -187,22 +205,31 @@ class _FeaturedPlaylistScreenState extends State<FeaturedPlaylistScreen> {
   }
 }
 
-// ── Header ───────────────────────────────────────────────────────────────────
+// ── Header with collage ───────────────────────────────────────────────────────
 
 class _Header extends StatelessWidget {
   final FeaturedPlaylist playlist;
   final int trackCount;
+  final List<String> thumbnails;
 
-  const _Header({required this.playlist, required this.trackCount});
+  const _Header({
+    required this.playlist,
+    required this.trackCount,
+    required this.thumbnails,
+  });
 
   @override
   Widget build(BuildContext context) {
     final tt = Theme.of(context).textTheme;
+    final pl = playlist;
 
     return Container(
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: playlist.gradient,
+          colors: [
+            pl.gradient.first,
+            pl.gradient.last.withOpacity(0.85),
+          ],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
@@ -211,9 +238,10 @@ class _Header extends StatelessWidget {
         bottom: false,
         child: Column(
           children: [
-            // Back button row
+            // Back button
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               child: Row(
                 children: [
                   IconButton(
@@ -224,30 +252,56 @@ class _Header extends StatelessWidget {
                 ],
               ),
             ),
-            // Emoji + title
+
+            // Collage + info row
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
               child: Row(
                 children: [
-                  Text(playlist.emoji,
-                      style: const TextStyle(fontSize: 52)),
+                  // Collage square
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: SizedBox(
+                      width: 100,
+                      height: 100,
+                      child: thumbnails.length >= 4
+                          ? _CollageGrid(thumbnails: thumbnails)
+                          : thumbnails.isNotEmpty
+                              ? CachedNetworkImage(
+                                  imageUrl: thumbnails.first,
+                                  fit: BoxFit.cover,
+                                )
+                              : _EmojiBox(emoji: pl.emoji, gradient: pl.gradient),
+                    ),
+                  ),
+
                   const SizedBox(width: 16),
+
+                  // Title / subtitle / count
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(playlist.title,
-                            style: tt.headlineMedium
-                                ?.copyWith(color: Colors.white, fontSize: 24)),
+                        Text(pl.title,
+                            style: tt.headlineMedium?.copyWith(
+                                color: Colors.white, fontSize: 22)),
                         const SizedBox(height: 4),
-                        Text(playlist.subtitle,
+                        Text(pl.subtitle,
                             style: tt.bodyMedium
                                 ?.copyWith(color: Colors.white70)),
                         if (trackCount > 0) ...[
-                          const SizedBox(height: 4),
-                          Text('$trackCount tracks',
-                              style: tt.labelSmall
-                                  ?.copyWith(color: Colors.white60)),
+                          const SizedBox(height: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Text('$trackCount tracks',
+                                style: tt.labelSmall
+                                    ?.copyWith(color: Colors.white)),
+                          ),
                         ],
                       ],
                     ),
@@ -262,7 +316,55 @@ class _Header extends StatelessWidget {
   }
 }
 
-// ── Track row ────────────────────────────────────────────────────────────────
+class _CollageGrid extends StatelessWidget {
+  final List<String> thumbnails;
+  const _CollageGrid({required this.thumbnails});
+
+  @override
+  Widget build(BuildContext context) {
+    return GridView.count(
+      crossAxisCount: 2,
+      physics: const NeverScrollableScrollPhysics(),
+      padding: EdgeInsets.zero,
+      mainAxisSpacing: 1.5,
+      crossAxisSpacing: 1.5,
+      children: thumbnails.take(4).map((url) {
+        return CachedNetworkImage(
+          imageUrl: url,
+          fit: BoxFit.cover,
+          placeholder: (_, __) =>
+              Container(color: Colors.white.withOpacity(0.1)),
+          errorWidget: (_, __, ___) =>
+              Container(color: Colors.white.withOpacity(0.1)),
+        );
+      }).toList(),
+    );
+  }
+}
+
+class _EmojiBox extends StatelessWidget {
+  final String emoji;
+  final List<Color> gradient;
+  const _EmojiBox({required this.emoji, required this.gradient});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: gradient,
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+      ),
+      child: Center(
+        child: Text(emoji, style: const TextStyle(fontSize: 40)),
+      ),
+    );
+  }
+}
+
+// ── Track row ─────────────────────────────────────────────────────────────────
 
 class _TrackRow extends StatelessWidget {
   final int index;
@@ -328,7 +430,6 @@ class _TrackRow extends StatelessWidget {
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Stream button
           isStreaming
               ? const SizedBox(
                   width: 24,
@@ -341,12 +442,11 @@ class _TrackRow extends StatelessWidget {
                   tooltip: 'Stream',
                   onPressed: onStream,
                 ),
-          // Download button
           isDownloaded
               ? const Padding(
                   padding: EdgeInsets.symmetric(horizontal: 6),
-                  child: Icon(Icons.check_circle,
-                      color: Colors.green, size: 22),
+                  child:
+                      Icon(Icons.check_circle, color: Colors.green, size: 22),
                 )
               : IconButton(
                   icon: Icon(Icons.download_outlined,
@@ -369,7 +469,7 @@ class _TrackRow extends StatelessWidget {
       );
 }
 
-// ── Error state ──────────────────────────────────────────────────────────────
+// ── Error state ───────────────────────────────────────────────────────────────
 
 class _ErrorState extends StatelessWidget {
   final String error;
