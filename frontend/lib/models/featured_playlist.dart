@@ -22,7 +22,7 @@ class FeaturedPlaylist {
   });
 }
 
-/// The curated list of featured playlists shown at the top of Search.
+/// Original curated playlists
 const kFeaturedPlaylists = [
   FeaturedPlaylist(
     id: 'bollywood_top50',
@@ -97,3 +97,60 @@ const kFeaturedPlaylists = [
     emoji: '🌟',
   ),
 ];
+
+/// Mood playlists — shown in a dedicated "Moods" section
+const kMoodPlaylists = [
+  FeaturedPlaylist(
+    id: 'mood_workout',
+    title: 'Workout',
+    subtitle: 'High energy, push harder',
+    searchQuery: 'workout gym high energy music 2025',
+    gradient: [Color(0xFFFF416C), Color(0xFFFF4B2B)],
+    icon: Icons.fitness_center_rounded,
+    emoji: '💪',
+    limit: 20,
+  ),
+  FeaturedPlaylist(
+    id: 'mood_chill',
+    title: 'Chill',
+    subtitle: 'Relax and unwind',
+    searchQuery: 'chill lofi relaxing music mix',
+    gradient: [Color(0xFF4776E6), Color(0xFF8E54E9)],
+    icon: Icons.self_improvement_rounded,
+    emoji: '😌',
+    limit: 20,
+  ),
+  FeaturedPlaylist(
+    id: 'mood_party',
+    title: 'Party',
+    subtitle: 'Turn it up loud',
+    searchQuery: 'party dance hits 2025 club music',
+    gradient: [Color(0xFFf953c6), Color(0xFFb91d73)],
+    icon: Icons.celebration_rounded,
+    emoji: '🎉',
+    limit: 20,
+  ),
+  FeaturedPlaylist(
+    id: 'mood_focus',
+    title: 'Focus',
+    subtitle: 'Deep work, zero distraction',
+    searchQuery: 'focus study concentration instrumental music',
+    gradient: [Color(0xFF134E5E), Color(0xFF71B280)],
+    icon: Icons.center_focus_strong_rounded,
+    emoji: '🧠',
+    limit: 20,
+  ),
+];
+
+/// Trending Now — treated as a single special playlist.
+/// The section widget handles daily-refresh caching separately.
+const kTrendingPlaylist = FeaturedPlaylist(
+  id: 'trending_now',
+  title: 'Trending Now',
+  subtitle: 'What the world is playing today',
+  searchQuery: 'trending songs right now 2025 viral hits',
+  gradient: [Color(0xFFFF6B6B), Color(0xFFFFD93D)],
+  icon: Icons.trending_up_rounded,
+  emoji: '🔥',
+  limit: 25,
+);

@@ -1,14 +1,222 @@
+import 'dart:convert';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/featured_playlist.dart';
 import '../providers/server_provider.dart';
 import '../screens/featured_playlist_screen.dart';
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Root section widget — composes Trending, Artist Radio, Moods, Featured
+// ─────────────────────────────────────────────────────────────────────────────
+
 class FeaturedPlaylistsSection extends StatelessWidget {
   const FeaturedPlaylistsSection({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return const Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _TrendingSection(),
+        _ArtistRadioSection(),
+        _MoodSection(),
+        _FeaturedSection(),
+      ],
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Trending Now — daily-refreshed single card
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _TrendingSection extends StatefulWidget {
+  const _TrendingSection();
+
+  @override
+  State<_TrendingSection> createState() => _TrendingSectionState();
+}
+
+class _TrendingSectionState extends State<_TrendingSection> {
+  static const _cacheKey     = 'trending_thumbs_v1';
+  static const _cacheTimeKey = 'trending_thumbs_time_v1';
+
+  List<String> _thumbnails = [];
+  bool _loaded = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!_loaded) {
+      _loaded = true;
+      _loadThumbnails();
+    }
+  }
+
+  Future<void> _loadThumbnails() async {
+    final prefs = await SharedPreferences.getInstance();
+    final lastFetch = prefs.getInt(_cacheTimeKey) ?? 0;
+    final now       = DateTime.now().millisecondsSinceEpoch;
+    final stale     = (now - lastFetch) > const Duration(hours: 24).inMilliseconds;
+
+    if (!stale) {
+      final cached = prefs.getString(_cacheKey);
+      if (cached != null) {
+        final list = (jsonDecode(cached) as List).cast<String>();
+        if (mounted) setState(() => _thumbnails = list);
+        return;
+      }
+    }
+
+    // Fetch fresh thumbnails
+    final server = context.read<ServerProvider>();
+    if (!server.isOnline) return;
+    try {
+      final res = await Dio().get(
+        '${server.serverUrl}/search',
+        queryParameters: {
+          'q':     kTrendingPlaylist.searchQuery,
+          'limit': 4,
+        },
+        options: Options(receiveTimeout: const Duration(seconds: 15)),
+      );
+      final thumbs = (res.data['results'] as List? ?? [])
+          .map((e) => e['thumbnail'] as String?)
+          .whereType<String>()
+          .take(4)
+          .toList();
+
+      await prefs.setString(_cacheKey, jsonEncode(thumbs));
+      await prefs.setInt(_cacheTimeKey, now);
+
+      if (mounted) setState(() => _thumbnails = thumbs);
+    } catch (_) {}
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tt = Theme.of(context).textTheme;
+    final pl = kTrendingPlaylist;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 10),
+          child: Row(
+            children: [
+              Text('🔥  Trending Now', style: tt.titleMedium),
+              const Spacer(),
+              Text('Daily refresh',
+                  style: tt.labelSmall?.copyWith(
+                      color: Theme.of(context)
+                          .colorScheme
+                          .onSurface
+                          .withOpacity(0.4))),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: _PlaylistCard(playlist: pl, prefetchedThumbs: _thumbnails),
+        ),
+        const SizedBox(height: 8),
+      ],
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Artist Radio — text input → FeaturedPlaylistScreen
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _ArtistRadioSection extends StatefulWidget {
+  const _ArtistRadioSection();
+
+  @override
+  State<_ArtistRadioSection> createState() => _ArtistRadioSectionState();
+}
+
+class _ArtistRadioSectionState extends State<_ArtistRadioSection> {
+  final _ctrl = TextEditingController();
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  void _launch(String artist) {
+    final name = artist.trim();
+    if (name.isEmpty) return;
+    FocusScope.of(context).unfocus();
+    _ctrl.clear();
+
+    final playlist = FeaturedPlaylist(
+      id:          'artist_radio_${name.toLowerCase().replaceAll(' ', '_')}',
+      title:       '$name Radio',
+      subtitle:    'Best of $name',
+      searchQuery: '$name songs mix best hits',
+      gradient:    const [Color(0xFF6C63FF), Color(0xFF3B82F6)],
+      icon:        Icons.radio_rounded,
+      emoji:       '📻',
+      limit:       20,
+    );
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => FeaturedPlaylistScreen(playlist: playlist),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tt = Theme.of(context).textTheme;
+    final cs = Theme.of(context).colorScheme;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
+          child: Text('📻  Artist Radio', style: tt.titleMedium),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: TextField(
+            controller: _ctrl,
+            textInputAction: TextInputAction.search,
+            onSubmitted: _launch,
+            decoration: InputDecoration(
+              hintText: 'Enter an artist name…',
+              prefixIcon: const Icon(Icons.person_search_rounded, size: 20),
+              suffixIcon: IconButton(
+                icon: Icon(Icons.arrow_forward_rounded,
+                    color: cs.primary, size: 20),
+                onPressed: () => _launch(_ctrl.text),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+      ],
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Mood playlists — 2-column grid
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _MoodSection extends StatelessWidget {
+  const _MoodSection();
 
   @override
   Widget build(BuildContext context) {
@@ -18,7 +226,100 @@ class FeaturedPlaylistsSection extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
+          child: Text('🎭  Moods', style: tt.titleMedium),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: GridView.count(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            crossAxisCount: 2,
+            crossAxisSpacing: 10,
+            mainAxisSpacing: 10,
+            childAspectRatio: 2.4,
+            children: kMoodPlaylists
+                .map((pl) => _MoodChip(playlist: pl))
+                .toList(),
+          ),
+        ),
+        const SizedBox(height: 16),
+      ],
+    );
+  }
+}
+
+class _MoodChip extends StatelessWidget {
+  final FeaturedPlaylist playlist;
+  const _MoodChip({required this.playlist});
+
+  @override
+  Widget build(BuildContext context) {
+    final tt = Theme.of(context).textTheme;
+    final pl = playlist;
+
+    return GestureDetector(
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => FeaturedPlaylistScreen(playlist: pl),
+        ),
+      ),
+      child: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: pl.gradient,
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Row(
+          children: [
+            Text(pl.emoji, style: const TextStyle(fontSize: 22)),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(pl.title,
+                      style: tt.titleMedium?.copyWith(
+                          color: Colors.white, fontSize: 13),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis),
+                  Text(pl.subtitle,
+                      style: tt.labelSmall
+                          ?.copyWith(color: Colors.white70, fontSize: 10),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Featured playlists — original vertical list
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _FeaturedSection extends StatelessWidget {
+  const _FeaturedSection();
+
+  @override
+  Widget build(BuildContext context) {
+    final tt = Theme.of(context).textTheme;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
           child: Text('Featured Playlists', style: tt.titleMedium),
         ),
         ListView.separated(
@@ -36,11 +337,18 @@ class FeaturedPlaylistsSection extends StatelessWidget {
   }
 }
 
-// ── Playlist card (vertical, full width) ─────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Shared playlist card (used by Trending + Featured)
+// ─────────────────────────────────────────────────────────────────────────────
 
 class _PlaylistCard extends StatefulWidget {
   final FeaturedPlaylist playlist;
-  const _PlaylistCard({required this.playlist});
+  final List<String> prefetchedThumbs;
+
+  const _PlaylistCard({
+    required this.playlist,
+    this.prefetchedThumbs = const [],
+  });
 
   @override
   State<_PlaylistCard> createState() => _PlaylistCardState();
@@ -53,9 +361,23 @@ class _PlaylistCardState extends State<_PlaylistCard> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    if (widget.prefetchedThumbs.isNotEmpty) {
+      _thumbnails = widget.prefetchedThumbs;
+      _fetched = true;
+      return;
+    }
     if (!_fetched) {
       _fetched = true;
       _fetchThumbnails();
+    }
+  }
+
+  @override
+  void didUpdateWidget(_PlaylistCard old) {
+    super.didUpdateWidget(old);
+    if (widget.prefetchedThumbs.isNotEmpty &&
+        widget.prefetchedThumbs != _thumbnails) {
+      setState(() => _thumbnails = widget.prefetchedThumbs);
     }
   }
 
@@ -68,8 +390,7 @@ class _PlaylistCardState extends State<_PlaylistCard> {
         queryParameters: {'q': widget.playlist.searchQuery, 'limit': 4},
         options: Options(receiveTimeout: const Duration(seconds: 15)),
       );
-      final results = (res.data['results'] as List? ?? []);
-      final thumbs = results
+      final thumbs = (res.data['results'] as List? ?? [])
           .map((e) => e['thumbnail'] as String?)
           .whereType<String>()
           .take(4)
@@ -105,10 +426,10 @@ class _PlaylistCardState extends State<_PlaylistCard> {
         ),
         child: Row(
           children: [
-            // ── Thumbnail collage ──────────────────────────────────────
+            // Thumbnail collage
             ClipRRect(
-              borderRadius: const BorderRadius.horizontal(
-                  left: Radius.circular(14)),
+              borderRadius:
+                  const BorderRadius.horizontal(left: Radius.circular(14)),
               child: SizedBox(
                 width: 88,
                 height: 88,
@@ -118,16 +439,14 @@ class _PlaylistCardState extends State<_PlaylistCard> {
                         ? CachedNetworkImage(
                             imageUrl: _thumbnails.first,
                             fit: BoxFit.cover,
-                            placeholder: (_, __) =>
-                                _gradientFallback(pl),
-                            errorWidget: (_, __, ___) =>
-                                _gradientFallback(pl),
+                            placeholder: (_, __) => _gradientFallback(pl),
+                            errorWidget: (_, __, ___) => _gradientFallback(pl),
                           )
                         : _gradientFallback(pl),
               ),
             ),
 
-            // ── Info ───────────────────────────────────────────────────
+            // Info
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.symmetric(
@@ -163,7 +482,7 @@ class _PlaylistCardState extends State<_PlaylistCard> {
               ),
             ),
 
-            // ── Arrow ──────────────────────────────────────────────────
+            // Play button
             Padding(
               padding: const EdgeInsets.only(right: 12),
               child: Container(
@@ -196,13 +515,14 @@ class _PlaylistCardState extends State<_PlaylistCard> {
           ),
         ),
         child: Center(
-          child: Text(pl.emoji,
-              style: const TextStyle(fontSize: 32)),
+          child: Text(pl.emoji, style: const TextStyle(fontSize: 32)),
         ),
       );
 }
 
-// ── 2x2 collage grid ─────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// 2×2 collage grid
+// ─────────────────────────────────────────────────────────────────────────────
 
 class _CollageGrid extends StatelessWidget {
   final List<String> thumbnails;
@@ -220,7 +540,8 @@ class _CollageGrid extends StatelessWidget {
         return CachedNetworkImage(
           imageUrl: url,
           fit: BoxFit.cover,
-          placeholder: (_, __) => Container(color: const Color(0xFF1A1A2E)),
+          placeholder: (_, __) =>
+              Container(color: const Color(0xFF1A1A2E)),
           errorWidget: (_, __, ___) =>
               Container(color: const Color(0xFF1A1A2E)),
         );
