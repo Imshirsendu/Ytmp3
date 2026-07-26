@@ -77,6 +77,13 @@ class MiniPlayer extends StatelessWidget {
                   ),
                 ),
 
+                // Sleep timer indicator
+                if (player.sleepTimerActive)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 4),
+                    child: _SleepIndicator(remaining: player.sleepRemaining),
+                  ),
+
                 // Play/pause
                 StreamBuilder<PlayerState>(
                   stream: player.playerStateStream,
@@ -120,4 +127,43 @@ class MiniPlayer extends StatelessWidget {
         child: Icon(Icons.music_note_rounded,
             size: 22, color: cs.onSurface.withOpacity(0.3)),
       );
+}
+
+// ── Sleep timer countdown chip ────────────────────────────────────────────────
+
+class _SleepIndicator extends StatelessWidget {
+  final Duration? remaining;
+  const _SleepIndicator({this.remaining});
+
+  String get _label {
+    final r = remaining;
+    if (r == null) return '🌙';
+    final m = r.inMinutes.remainder(60);
+    final s = r.inSeconds.remainder(60);
+    return r.inHours > 0
+        ? '🌙 ${r.inHours}h${m}m'
+        : m > 0
+            ? '🌙 ${m}m'
+            : '🌙 ${s}s';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      decoration: BoxDecoration(
+        color: cs.primary.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: cs.primary.withOpacity(0.3)),
+      ),
+      child: Text(
+        _label,
+        style: Theme.of(context)
+            .textTheme
+            .labelSmall
+            ?.copyWith(color: cs.primary, fontSize: 10),
+      ),
+    );
+  }
 }

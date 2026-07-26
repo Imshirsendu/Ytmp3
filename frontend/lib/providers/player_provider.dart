@@ -1,11 +1,29 @@
+import 'dart:async';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:just_audio/just_audio.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/search_result.dart';
 import '../models/track.dart';
 import 'recently_played_provider.dart';
+
+// ── LastSession ───────────────────────────────────────────────────────────────
+
+class LastSession {
+  final String filePath;
+  final String title;
+  final String artist;
+  final Duration position;
+
+  const LastSession({
+    required this.filePath,
+    required this.title,
+    required this.artist,
+    required this.position,
+  });
+}
 
 // ── StreamTrack ──────────────────────────────────────────────────────────────
 
@@ -95,6 +113,17 @@ class PlayerProvider extends ChangeNotifier {
 
   RecentlyPlayedProvider? _recentlyPlayed;
 
+  // ── Sleep timer ───────────────────────────────────────────────────────────
+  Timer?    _sleepTimer;
+  DateTime? _sleepEndsAt;
+
+  // ── Session persistence ───────────────────────────────────────────────────
+  static const _kFilePath  = 'session_file_path';
+  static const _kTitle     = 'session_title';
+  static const _kArtist    = 'session_artist';
+  static const _kPositionMs = 'session_position_ms';
+  Timer?    _sessionSaveTimer;
+
   void attachRecentlyPlayed(RecentlyPlayedProvider rp) {
     _recentlyPlayed = rp;
   }
@@ -112,6 +141,14 @@ class PlayerProvider extends ChangeNotifier {
   int          get queueIndex => _queueIndex;
   EqPreset     get eqPreset  => _eqPreset;
   bool         get eqReady   => _eqReady;
+
+  // Sleep timer getters
+  bool      get sleepTimerActive => _sleepTimer?.isActive ?? false;
+  Duration? get sleepRemaining {
+    if (_sleepEndsAt == null || !sleepTimerActive) return null;
+    final rem = _sleepEndsAt!.difference(DateTime.now());
+    return rem.isNegative ? Duration.zero : rem;
+  }
 
   List<Track> get queue {
     if (_shuffle && _shuffleOrder.isNotEmpty) {
@@ -159,7 +196,10 @@ class PlayerProvider extends ChangeNotifier {
     }
 
     _player.playerStateStream.listen((_) => notifyListeners());
-    _player.positionStream.listen((_) => notifyListeners());
+    _player.positionStream.listen((_) {
+      notifyListeners();
+      _throttledSaveSession();
+    });
     _player.processingStateStream.listen((state) {
       if (state == ProcessingState.completed) _onTrackComplete();
     });
@@ -323,6 +363,91 @@ class PlayerProvider extends ChangeNotifier {
     }
   }
 
+  // ── Sleep timer ───────────────────────────────────────────────────────────
+
+  void setSleepTimer(Duration duration) {
+    _sleepTimer?.cancel();
+    _sleepEndsAt = DateTime.now().add(duration);
+    _sleepTimer  = Timer(duration, () async {
+      await _player.pause();
+      _sleepEndsAt = null;
+      notifyListeners();
+    });
+    // Tick every 30s so the countdown in the UI stays fresh
+    Timer.periodic(const Duration(seconds: 30), (t) {
+      if (!sleepTimerActive) { t.cancel(); return; }
+      notifyListeners();
+    });
+    notifyListeners();
+  }
+
+  void cancelSleepTimer() {
+    _sleepTimer?.cancel();
+    _sleepTimer  = null;
+    _sleepEndsAt = null;
+    notifyListeners();
+  }
+
+  // ── Session persistence ───────────────────────────────────────────────────
+
+  /// Throttled — writes at most once every 5 seconds while playing.
+  void _throttledSaveSession() {
+    if (_current == null || _current!.isStream) return;
+    if (_sessionSaveTimer?.isActive ?? false) return;
+    _sessionSaveTimer = Timer(const Duration(seconds: 5), _saveSession);
+  }
+
+  Future<void> _saveSession() async {
+    final track = _current?.local;
+    if (track == null) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_kFilePath,   track.filePath);
+      await prefs.setString(_kTitle,      track.title);
+      await prefs.setString(_kArtist,     track.artist);
+      await prefs.setInt(_kPositionMs, _player.position.inMilliseconds);
+    } catch (e) {
+      debugPrint('Session save error: $e');
+    }
+  }
+
+  /// Call once on app start (e.g. in initState of your home screen).
+  /// Returns a [LastSession] if one exists, null otherwise.
+  static Future<LastSession?> loadLastSession() async {
+    try {
+      final prefs    = await SharedPreferences.getInstance();
+      final filePath = prefs.getString(_kFilePath);
+      final title    = prefs.getString(_kTitle);
+      final artist   = prefs.getString(_kArtist);
+      final posMs    = prefs.getInt(_kPositionMs);
+      if (filePath == null || title == null || artist == null) return null;
+      return LastSession(
+        filePath: filePath,
+        title:    title,
+        artist:   artist,
+        position: Duration(milliseconds: posMs ?? 0),
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Clear the saved session (call after user dismisses resume banner).
+  static Future<void> clearLastSession() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_kFilePath);
+    await prefs.remove(_kTitle);
+    await prefs.remove(_kArtist);
+    await prefs.remove(_kPositionMs);
+  }
+
+  /// Resume the last session — loads the track and seeks to saved position.
+  Future<void> resumeSession(LastSession session, Track track) async {
+    await playTrack(track);
+    await _player.seek(session.position);
+    await clearLastSession();
+  }
+
   // ── Recently played ───────────────────────────────────────────────────────
 
   void _logTrack(Track track) {
@@ -344,6 +469,9 @@ class PlayerProvider extends ChangeNotifier {
 
   @override
   void dispose() {
+    _sleepTimer?.cancel();
+    _sessionSaveTimer?.cancel();
+    _saveSession(); // flush final position synchronously-ish
     _equalizer?.release();
     _loudness?.release();
     _player.dispose();
