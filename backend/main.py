@@ -33,7 +33,16 @@ log = logging.getLogger("ytmp3")
 DOWNLOAD_DIR = Path(os.getenv("DOWNLOAD_DIR", "/tmp/ytmp3"))
 DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
+COOKIES_FILE = Path(__file__).parent / "cookies.txt"
+
 SPONSORBLOCK_CATS = ["sponsor", "intro", "outro", "selfpromo", "interaction"]
+
+
+def _cookie_opt() -> dict:
+    """Return cookiefile opt if cookies.txt exists alongside main.py."""
+    if COOKIES_FILE.exists():
+        return {"cookiefile": str(COOKIES_FILE)}
+    return {}
 
 
 # ─── App lifespan ───────────────────────────────────────────────────────────
@@ -79,6 +88,7 @@ def _build_ydl_opts(out_tmpl: str) -> dict:
         "extractor_args": {
             "youtube": {"player_client": ["android_vr"]},
         },
+        **_cookie_opt(),
         "postprocessors": [
             {
                 "key": "FFmpegExtractAudio",
@@ -163,6 +173,7 @@ def _get_stream_url(url: str) -> dict:
         "extractor_args": {
             "youtube": {"player_client": ["android_vr"]},
         },
+        **_cookie_opt(),
     }
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=False)
@@ -224,6 +235,7 @@ async def search_youtube(
         "extractor_args": {
             "youtube": {"player_client": ["android_vr"]},
         },
+        **_cookie_opt(),
     }
 
     try:
@@ -270,6 +282,7 @@ async def get_info(url: str = Query(..., description="YouTube video URL")):
         "extractor_args": {
             "youtube": {"player_client": ["android_vr"]},
         },
+        **_cookie_opt(),
     }
     try:
         loop = asyncio.get_event_loop()
