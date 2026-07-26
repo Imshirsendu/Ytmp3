@@ -42,10 +42,9 @@ class PlayerScreen extends StatelessWidget {
             style: tt.labelSmall?.copyWith(letterSpacing: 2)),
         centerTitle: true,
         actions: [
-          // Queue button — only shown for local queue
           Consumer<PlayerProvider>(
             builder: (ctx, player, _) =>
-                player.current?.isStream == false && player.queue.isNotEmpty
+                !player.current!.isStream && player.queue.isNotEmpty
                     ? IconButton(
                         icon: const Icon(Icons.queue_music_outlined),
                         tooltip: 'Queue',
@@ -69,7 +68,7 @@ class PlayerScreen extends StatelessWidget {
                 children: [
                   const Spacer(flex: 2),
 
-                  // ── Cover art ──────────────────────────────────────────
+                  // ── Cover art ────────────────────────────────────────
                   AspectRatio(
                     aspectRatio: 1,
                     child: ClipRRect(
@@ -84,7 +83,7 @@ class PlayerScreen extends StatelessWidget {
 
                   const Spacer(flex: 2),
 
-                  // ── Title & artist ────────────────────────────────────
+                  // ── Title & artist ───────────────────────────────────
                   Row(
                     children: [
                       Expanded(
@@ -99,10 +98,12 @@ class PlayerScreen extends StatelessWidget {
                             const SizedBox(height: 4),
                             Row(
                               children: [
-                                Text(now.artist,
-                                    style: tt.bodyMedium,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis),
+                                Flexible(
+                                  child: Text(now.artist,
+                                      style: tt.bodyMedium,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis),
+                                ),
                                 if (now.isStream) ...[
                                   const SizedBox(width: 6),
                                   Container(
@@ -112,7 +113,7 @@ class PlayerScreen extends StatelessWidget {
                                       color: cs.secondary.withOpacity(0.15),
                                       borderRadius: BorderRadius.circular(4),
                                     ),
-                                    child: Text('LIVE',
+                                    child: Text('STREAM',
                                         style: tt.labelSmall?.copyWith(
                                             color: cs.secondary,
                                             fontSize: 9,
@@ -129,7 +130,7 @@ class PlayerScreen extends StatelessWidget {
 
                   const SizedBox(height: 24),
 
-                  // ── Seek bar ──────────────────────────────────────────
+                  // ── Seek bar ─────────────────────────────────────────
                   StreamBuilder<Duration>(
                     stream: player.positionStream,
                     builder: (ctx, snap) {
@@ -177,9 +178,44 @@ class PlayerScreen extends StatelessWidget {
                     },
                   ),
 
-                  const SizedBox(height: 24),
+                  const SizedBox(height: 16),
 
-                  // ── Controls ──────────────────────────────────────────
+                  // ── Shuffle / Loop row (local only) ──────────────────
+                  if (!now.isStream)
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        // Shuffle
+                        IconButton(
+                          icon: Icon(
+                            Icons.shuffle_rounded,
+                            color: player.shuffle
+                                ? cs.primary
+                                : cs.onSurface.withOpacity(0.4),
+                          ),
+                          onPressed: player.toggleShuffle,
+                          tooltip: 'Shuffle',
+                        ),
+                        const Spacer(),
+                        // Loop
+                        IconButton(
+                          icon: Icon(
+                            player.loopMode == AppLoopMode.one
+                                ? Icons.repeat_one_rounded
+                                : Icons.repeat_rounded,
+                            color: player.loopMode != AppLoopMode.none
+                                ? cs.primary
+                                : cs.onSurface.withOpacity(0.4),
+                          ),
+                          onPressed: player.toggleLoop,
+                          tooltip: 'Loop',
+                        ),
+                      ],
+                    ),
+
+                  const SizedBox(height: 8),
+
+                  // ── Main controls ────────────────────────────────────
                   StreamBuilder<PlayerState>(
                     stream: player.playerStateStream,
                     builder: (ctx, snap) {
@@ -193,7 +229,6 @@ class PlayerScreen extends StatelessWidget {
                       return Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          // Previous (hidden for streams)
                           if (!now.isStream)
                             IconButton(
                               iconSize: 36,
@@ -208,17 +243,23 @@ class PlayerScreen extends StatelessWidget {
 
                           const SizedBox(width: 16),
 
-                          // Play / Pause
                           GestureDetector(
                             onTap: isLoading
                                 ? null
                                 : player.togglePlayPause,
                             child: Container(
-                              width: 64,
-                              height: 64,
+                              width: 68,
+                              height: 68,
                               decoration: BoxDecoration(
                                 color: cs.primary,
                                 shape: BoxShape.circle,
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: cs.primary.withOpacity(0.4),
+                                    blurRadius: 20,
+                                    offset: const Offset(0, 6),
+                                  ),
+                                ],
                               ),
                               child: isLoading
                                   ? const Padding(
@@ -231,7 +272,7 @@ class PlayerScreen extends StatelessWidget {
                                       isPlaying
                                           ? Icons.pause_rounded
                                           : Icons.play_arrow_rounded,
-                                      size: 34,
+                                      size: 36,
                                       color: cs.onPrimary,
                                     ),
                             ),
@@ -239,18 +280,15 @@ class PlayerScreen extends StatelessWidget {
 
                           const SizedBox(width: 16),
 
-                          // Next (hidden for streams)
                           if (!now.isStream)
                             IconButton(
                               iconSize: 36,
                               icon: Icon(Icons.skip_next_rounded,
                                   color: player.hasNext
                                       ? cs.onSurface
-                                      : cs.onSurface
-                                          .withOpacity(0.3)),
-                              onPressed: player.hasNext
-                                  ? player.skipNext
-                                  : null,
+                                      : cs.onSurface.withOpacity(0.3)),
+                              onPressed:
+                                  player.hasNext ? player.skipNext : null,
                             ),
                         ],
                       );
