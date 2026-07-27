@@ -184,6 +184,7 @@ def _get_stream_info(url: str) -> dict:
         ["web"],
     ]
 
+    proxy = os.getenv("YT_PROXY", "").strip() or None
     last_error = None
     for clients in client_attempts:
         opts = {
@@ -197,6 +198,7 @@ def _get_stream_info(url: str) -> dict:
                 }
             },
             **_cookie_opt(),
+            **({"proxy": proxy} if proxy else {}),
         }
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
@@ -342,11 +344,12 @@ async def stream_info_endpoint(url: str = Query(...)):
         loop = asyncio.get_event_loop()
         result = await asyncio.wait_for(loop.run_in_executor(None, _get_stream_info, url), timeout=25)
         return JSONResponse({
-            "title":     result["title"],
-            "artist":    result["artist"],
-            "album":     result["album"],
-            "duration":  result["duration"],
-            "thumbnail": result["thumbnail"],
+            "title":      result["title"],
+            "artist":     result["artist"],
+            "album":      result["album"],
+            "duration":   result["duration"],
+            "thumbnail":  result["thumbnail"],
+            "stream_url": result["stream_url"],   # CDN URL — played directly by just_audio
         })
     except asyncio.TimeoutError:
         raise HTTPException(status_code=504, detail="Timed out")

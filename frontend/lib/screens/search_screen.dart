@@ -97,7 +97,7 @@ class _SearchScreenState extends State<SearchScreen> {
       final data = res.data as Map<String, dynamic>;
       final st = StreamTrack(
         youtubeUrl:   result.url,
-       streamUrl: server.streamProxyUrl(result.url),
+       streamUrl: data['stream_url'] as String,
         title:        data['title']     as String? ?? result.title,
         artist:       data['artist']    as String? ?? result.uploader,
         thumbnailUrl: data['thumbnail'] as String?,
