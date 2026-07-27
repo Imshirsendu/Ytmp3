@@ -2,7 +2,7 @@
 set -e
 
 echo "[start] Launching bgutil PO token server..."
-node /opt/bgutil/server/build/index.js &
+node /opt/bgutil/server/build/main.js &
 BGUTIL_PID=$!
 echo "[start] bgutil PID: $BGUTIL_PID"
 
