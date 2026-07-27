@@ -194,7 +194,6 @@ def _get_stream_info(url: str) -> dict:
             "extractor_args": {
                 "youtube": {
                     "player_client": clients,
-                    "po_token": ["web+auto"],
                 }
             },
             **_cookie_opt(),
@@ -209,10 +208,11 @@ def _get_stream_info(url: str) -> dict:
             formats = info.get("formats") or []
 
             # Log all available formats for debugging
-            log.info("client=%s total_formats=%d format_ids=%s",
+            log.info("client=%s total_formats=%d vcodecs=%s abrs=%s",
                 clients,
                 len(formats),
-                [f.get("format_id") for f in formats[:10]]
+                list(set(f.get("vcodec","?") for f in formats[:15])),
+                [f.get("abr") for f in formats[:15]],
             )
 
             # Pick best audio-only format with a direct http URL
@@ -469,3 +469,43 @@ def _cleanup_task(work_dir: Path):
         shutil.rmtree(work_dir, ignore_errors=True)
         log.debug("Cleaned up %s", work_dir)
     return BackgroundTask(_rm)
+
+
+@app.get("/debug/formats")
+async def debug_formats(url: str = Query(...)):
+    """Debug: show all formats yt-dlp can extract for a URL."""
+    opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "skip_download": True,
+        "socket_timeout": 30,
+        "extractor_args": {"youtube": {"player_client": ["ios"]}},
+        **_cookie_opt(),
+    }
+    try:
+        loop = asyncio.get_event_loop()
+        def _extract():
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                return ydl.extract_info(url, download=False)
+        info = await asyncio.wait_for(loop.run_in_executor(None, _extract), timeout=30)
+        if "entries" in info:
+            info = info["entries"][0]
+        formats = info.get("formats") or []
+        return {
+            "title": info.get("title"),
+            "total_formats": len(formats),
+            "formats": [
+                {
+                    "format_id": f.get("format_id"),
+                    "ext": f.get("ext"),
+                    "vcodec": f.get("vcodec"),
+                    "acodec": f.get("acodec"),
+                    "abr": f.get("abr"),
+                    "tbr": f.get("tbr"),
+                    "has_url": bool(f.get("url")),
+                }
+                for f in formats
+            ],
+        }
+    except Exception as e:
+        return {"error": str(e)}
