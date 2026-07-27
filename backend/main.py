@@ -115,7 +115,7 @@ def _build_ydl_opts(out_tmpl: str) -> dict:
         "quiet": True,
         "no_warnings": True,
         "socket_timeout": 30,
-        "extractor_args": {"youtube": {"player_client": ["android"]}},
+        "extractor_args": {"youtube": {"player_client": ["web"]}},
         "postprocessors": [
             {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "320"},
             {"key": "EmbedThumbnail"},
@@ -124,10 +124,10 @@ def _build_ydl_opts(out_tmpl: str) -> dict:
             {"key": "ModifyChapters", "remove_sponsor_segments": SPONSORBLOCK_CATS},
         ],
         "writethumbnail": True,
+        "embedthumbnail": True,
         **_cookie_opt(),
         "js_runtimes": {"node": {"path": "/usr/bin/node"}},
         "remote_components": {"ejs:github"},
-        "embedthumbnail": True,
     }
 
 
