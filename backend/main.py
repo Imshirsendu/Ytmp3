@@ -178,9 +178,8 @@ def _get_stream_url(url: str) -> dict:
     Returns the best audio format URL plus metadata.
     """
     # Use web client WITH cookies — cookies solve bot detection on Railway.
-    # Android client does not support cookies so we use web here.
+    # Do not restrict format — let yt-dlp pick whatever is available.
     opts = {
-        "format": "bestaudio/best",
         "quiet": True,
         "no_warnings": True,
         "skip_download": True,
