@@ -58,21 +58,23 @@ def _cookie_opt() -> dict:
 
 
 def _update_ytdlp() -> None:
-    """Update yt-dlp to latest version on startup — prevents format errors from stale builds."""
-    try:
-        result = subprocess.run(
-            [sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp", "--quiet"],
-            capture_output=True, text=True, timeout=60
-        )
-        if result.returncode == 0:
-            import importlib
-            import yt_dlp as _yt
-            importlib.reload(_yt)
-            log.info("yt-dlp updated successfully")
-        else:
-            log.warning("yt-dlp update failed: %s", result.stderr)
-    except Exception as e:
-        log.warning("yt-dlp update skipped: %s", e)
+    """Update yt-dlp + install bgutil-ytdlp-pot-provider for PO token support on server IPs."""
+    packages = [
+        ("yt-dlp", "yt-dlp"),
+        ("bgutil-ytdlp-pot-provider", "bgutil-ytdlp-pot-provider"),
+    ]
+    for pip_name, import_name in packages:
+        try:
+            result = subprocess.run(
+                [sys.executable, "-m", "pip", "install", "--upgrade", pip_name, "--quiet"],
+                capture_output=True, text=True, timeout=120
+            )
+            if result.returncode == 0:
+                log.info("%s installed/updated OK", pip_name)
+            else:
+                log.warning("%s update failed: %s", pip_name, result.stderr[:200])
+        except Exception as e:
+            log.warning("%s update skipped: %s", pip_name, e)
 
 
 @asynccontextmanager
@@ -189,7 +191,12 @@ def _get_stream_info(url: str) -> dict:
             "no_warnings": True,
             "skip_download": True,
             "socket_timeout": 30,
-            "extractor_args": {"youtube": {"player_client": clients}},
+            "extractor_args": {
+                "youtube": {
+                    "player_client": clients,
+                    "po_token": ["web+auto"],
+                }
+            },
             **_cookie_opt(),
         }
         try:
