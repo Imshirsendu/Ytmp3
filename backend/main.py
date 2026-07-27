@@ -201,6 +201,13 @@ def _get_stream_info(url: str) -> dict:
 
             formats = info.get("formats") or []
 
+            # Log all available formats for debugging
+            log.info("client=%s total_formats=%d format_ids=%s",
+                clients,
+                len(formats),
+                [f.get("format_id") for f in formats[:10]]
+            )
+
             # Pick best audio-only format with a direct http URL
             audio_only = [
                 f for f in formats
