@@ -70,14 +70,16 @@ class _FeaturedPlaylistScreenState extends State<FeaturedPlaylistScreen> {
 
     setState(() => _streaming.add(result.id));
     try {
+      final streamUrl = server.streamInfoUrl(result.url);
+      debugPrint('▶ STREAM REQUEST: $streamUrl');
       final res = await _dio.get(
-        server.streamInfoUrl(result.url),
+        streamUrl,
         options: Options(receiveTimeout: const Duration(seconds: 25)),
       );
       final data = res.data as Map<String, dynamic>;
       final st = StreamTrack(
         youtubeUrl:   result.url,
-        streamUrl:    data['stream_url'] as String,
+      streamUrl: server.streamProxyUrl(result.url),
         title:        data['title']     as String? ?? result.title,
         artist:       data['artist']    as String? ?? result.uploader,
         thumbnailUrl: data['thumbnail'] as String?,
@@ -88,10 +90,14 @@ class _FeaturedPlaylistScreenState extends State<FeaturedPlaylistScreen> {
       if (andOpenPlayer && context.mounted) PlayerScreen.show(context);
     } catch (e) {
       if (context.mounted) {
+        String msg = 'Stream failed';
+        if (e is DioException) {
+          final detail = e.response?.data?['detail'];
+          msg = detail != null ? 'Stream failed: $detail' : 'Stream failed: ${e.message}';
+          debugPrint('▶ STREAM ERROR: ${e.response?.statusCode} — ${e.response?.data}');
+        }
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              content: Text('Stream failed: $e'),
-              backgroundColor: Colors.red),
+          SnackBar(content: Text(msg), backgroundColor: Colors.red),
         );
       }
     } finally {

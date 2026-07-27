@@ -37,14 +37,12 @@ class ServerProvider extends ChangeNotifier {
 
   void _startPing() {
     checkNow();
-    _pingTimer =
-        Timer.periodic(const Duration(seconds: 15), (_) => checkNow());
+    _pingTimer = Timer.periodic(const Duration(seconds: 15), (_) => checkNow());
   }
 
   Future<void> checkNow() async {
     _status = ServerStatus.checking;
     notifyListeners();
-
     try {
       final res = await Dio().get(
         '$_serverUrl/health',
@@ -53,21 +51,25 @@ class ServerProvider extends ChangeNotifier {
           sendTimeout: const Duration(seconds: 4),
         ),
       );
-      _status =
-          (res.statusCode == 200) ? ServerStatus.online : ServerStatus.offline;
+      _status = (res.statusCode == 200) ? ServerStatus.online : ServerStatus.offline;
     } catch (_) {
       _status = ServerStatus.offline;
     }
-
     notifyListeners();
   }
 
-  /// URL to download a YouTube video as a 320 kbps MP3.
+  /// Download URL — returns a 320kbps MP3 file.
   String downloadUrl(String youtubeUrl) =>
       '$_serverUrl/download?url=${Uri.encodeQueryComponent(youtubeUrl)}';
 
-  /// URL to fetch a direct audio stream URL (returns JSON with stream_url).
+  /// Stream info URL — returns JSON with title, artist, thumbnail, duration.
+  /// Use this to get metadata before setting up the proxy stream.
   String streamInfoUrl(String youtubeUrl) =>
+      '$_serverUrl/stream/info?url=${Uri.encodeQueryComponent(youtubeUrl)}';
+
+  /// Stream proxy URL — point just_audio at this.
+  /// The server fetches YouTube CDN audio with correct headers and pipes it back.
+  String streamProxyUrl(String youtubeUrl) =>
       '$_serverUrl/stream?url=${Uri.encodeQueryComponent(youtubeUrl)}';
 
   @override

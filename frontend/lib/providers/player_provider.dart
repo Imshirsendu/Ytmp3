@@ -472,8 +472,6 @@ class PlayerProvider extends ChangeNotifier {
     _sleepTimer?.cancel();
     _sessionSaveTimer?.cancel();
     _saveSession(); // flush final position synchronously-ish
-    _equalizer?.release();
-    _loudness?.release();
     _player.dispose();
     super.dispose();
   }

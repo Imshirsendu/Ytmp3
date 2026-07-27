@@ -73,44 +73,68 @@ class _RecentCard extends StatelessWidget {
 
     return GestureDetector(
       onTap: () => _play(context),
-      child: Container(
-        width: 130,
-        decoration: BoxDecoration(
-          color: const Color(0xFF16213E),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Thumbnail
-            ClipRRect(
-              borderRadius:
-                  const BorderRadius.vertical(top: Radius.circular(12)),
-              child: _thumb(cs),
+      child: Stack(
+        children: [
+          Container(
+            width: 130,
+            decoration: BoxDecoration(
+              color: const Color(0xFF16213E),
+              borderRadius: BorderRadius.circular(12),
             ),
-            // Title + artist
-            Padding(
-              padding: const EdgeInsets.fromLTRB(8, 5, 8, 0),
-              child: Text(
-                entry.title,
-                style: tt.labelMedium?.copyWith(fontSize: 11),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Thumbnail
+                ClipRRect(
+                  borderRadius:
+                      const BorderRadius.vertical(top: Radius.circular(12)),
+                  child: _thumb(cs),
+                ),
+                // Title + artist
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 5, 8, 0),
+                  child: Text(
+                    entry.title,
+                    style: tt.labelMedium?.copyWith(fontSize: 11),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 1, 8, 0),
+                  child: Text(
+                    entry.artist,
+                    style: tt.labelSmall?.copyWith(
+                        fontSize: 10,
+                        color: cs.onSurface.withOpacity(0.5)),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // ── Dismiss button ───────────────────────────────────────────
+          Positioned(
+            top: 4,
+            right: 4,
+            child: GestureDetector(
+              onTap: () =>
+                  context.read<RecentlyPlayedProvider>().removeEntry(entry.id),
+              child: Container(
+                width: 20,
+                height: 20,
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.55),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.close_rounded,
+                    size: 13, color: Colors.white),
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(8, 1, 8, 0),
-              child: Text(
-                entry.artist,
-                style: tt.labelSmall?.copyWith(
-                    fontSize: 10,
-                    color: cs.onSurface.withOpacity(0.5)),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

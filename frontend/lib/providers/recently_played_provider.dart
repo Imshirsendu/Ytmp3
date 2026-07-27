@@ -127,6 +127,12 @@ class RecentlyPlayedProvider extends ChangeNotifier {
     _save();
   }
 
+  Future<void> removeEntry(String id) async {
+    _entries.removeWhere((e) => e.id == id);
+    notifyListeners();
+    await _save();
+  }
+
   Future<void> clear() async {
     _entries = [];
     notifyListeners();

@@ -23,7 +23,6 @@ class MiniPlayer extends StatelessWidget {
         return GestureDetector(
           onTap: () => PlayerScreen.show(context),
           child: Container(
-            height: 64,
             decoration: BoxDecoration(
               color: const Color(0xFF16213E),
               border: Border(
@@ -31,7 +30,11 @@ class MiniPlayer extends StatelessWidget {
                     color: cs.onSurface.withOpacity(0.08), width: 1),
               ),
             ),
-            child: Row(
+            child: SafeArea(
+              top: false,
+              child: SizedBox(
+                height: 64,
+                child: Row(
               children: [
                 const SizedBox(width: 12),
 
@@ -115,6 +118,8 @@ class MiniPlayer extends StatelessWidget {
 
                 const SizedBox(width: 4),
               ],
+            ),
+          ),
             ),
           ),
         );
