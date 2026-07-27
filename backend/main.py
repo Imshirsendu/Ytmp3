@@ -125,6 +125,8 @@ def _build_ydl_opts(out_tmpl: str) -> dict:
         ],
         "writethumbnail": True,
         **_cookie_opt(),
+        "js_runtimes": {"node": {"path": "/usr/bin/node"}},
+        "remote_components": {"ejs:github"},
         "embedthumbnail": True,
     }
 
