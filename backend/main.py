@@ -186,62 +186,36 @@ def _get_stream_info(url: str) -> dict:
 
     proxy = os.getenv("YT_PROXY", "").strip() or None
 
-    # Try Invidious API first — runs on non-datacenter IPs, bypasses Railway block
-    invidious_instances = [
-        "https://invidious.perennialte.ch",
-        "https://iv.melmac.space",
-        "https://invidious.io.lol",
-        "https://invidious.nerdvpn.de",
-        "https://yt.drgnz.club",
-        "https://invidious.fdn.fr",
-    ]
-    video_id = None
-    if "v=" in url:
-        video_id = url.split("v=")[-1].split("&")[0]
-    elif "youtu.be/" in url:
-        video_id = url.split("youtu.be/")[-1].split("?")[0]
-
-    if video_id:
-        for instance in invidious_instances:
-            try:
-                resp = httpx.get(
-                    f"{instance}/api/v1/videos/{video_id}",
-                    timeout=10, follow_redirects=True,
-                    headers={"User-Agent": "Mozilla/5.0"},
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    # Pick best audio format
-                    audio_formats = [
-                        f for f in data.get("adaptiveFormats", [])
-                        if f.get("type", "").startswith("audio/")
-                        and f.get("url")
-                    ]
-                    if not audio_formats:
-                        audio_formats = [
-                            f for f in data.get("formatStreams", [])
-                            if f.get("url")
-                        ]
-                    if audio_formats:
-                        best = max(audio_formats, key=lambda f: f.get("bitrate") or 0)
-                        log.info("Stream via Invidious (%s) OK", instance)
-                        return {
-                            "stream_url":   best["url"],
-                            "http_headers": {},
-                            "ext":          "webm",
-                            "title":        data.get("title", "Unknown"),
-                            "artist":       data.get("author") or "Unknown Artist",
-                            "album":        "YouTube",
-                            "duration":     data.get("lengthSeconds"),
-                            "thumbnail":    next(
-                                (t["url"] for t in data.get("videoThumbnails", [])
-                                 if t.get("quality") == "maxres"),
-                                data.get("videoThumbnails", [{}])[0].get("url") if data.get("videoThumbnails") else None
-                            ),
-                        }
-            except Exception as e:
-                log.warning("Invidious %s failed: %s", instance, e)
-                continue
+    # Try Cloudflare Worker first — bypasses Railway datacenter IP block
+    cf_worker = os.getenv("CF_WORKER_URL", "").strip().rstrip("/")
+    if cf_worker:
+        try:
+            resp = httpx.get(
+                f"{cf_worker}/extract",
+                params={"url": url},
+                timeout=15,
+                follow_redirects=True,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("stream_url"):
+                    log.info("Stream via Cloudflare Worker OK: %s (source=%s)", data.get("title"), data.get("source"))
+                    return {
+                        "stream_url":   data["stream_url"],
+                        "http_headers": {},
+                        "ext":          data.get("ext", "webm"),
+                        "title":        data.get("title", "Unknown"),
+                        "artist":       data.get("artist") or "Unknown Artist",
+                        "album":        data.get("album") or "YouTube",
+                        "duration":     data.get("duration"),
+                        "thumbnail":    data.get("thumbnail"),
+                    }
+                else:
+                    log.warning("CF Worker returned no stream_url: %s", data)
+            else:
+                log.warning("CF Worker HTTP %s: %s", resp.status_code, resp.text[:200])
+        except Exception as e:
+            log.warning("Cloudflare Worker failed: %s", e)
 
     last_error = None
     for clients in client_attempts:
