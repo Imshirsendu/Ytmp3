@@ -149,83 +149,76 @@ def _download_audio(url: str, work_dir: Path) -> tuple[Path, dict]:
 
 def _get_stream_info(url: str) -> dict:
     """
-    Extract audio stream URL + headers + metadata.
-    Uses android player client to bypass bot detection on Railway.
-    Tries multiple format strategies so something always works.
+    Extract audio stream URL + metadata.
+    Tries ios -> android -> tv_embedded -> web player clients.
+    ios is the most reliable for bypassing YouTube bot detection on servers.
+    No format string specified — we pick the best audio URL from returned list.
     """
-    # Try each format string in order until one succeeds
-    format_attempts = [
-        "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best",
-        "bestaudio/best",
-        "best",
-    ]
-    # Try android client first (avoids bot detection), fall back to web
     client_attempts = [
-        {"extractor_args": {"youtube": {"player_client": ["android"]}}},
-        {"extractor_args": {"youtube": {"player_client": ["web"]}}},
-        {},
+        ["ios"],
+        ["android"],
+        ["tv_embedded"],
+        ["web"],
     ]
 
     last_error = None
-    for client_opts in client_attempts:
-        for fmt in format_attempts:
-            opts = {
-                "format": fmt,
-                "quiet": True,
-                "no_warnings": True,
-                "skip_download": True,
-                "socket_timeout": 20,
-                **client_opts,
-                **_cookie_opt(),
+    for clients in client_attempts:
+        opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "skip_download": True,
+            "socket_timeout": 30,
+            "extractor_args": {"youtube": {"player_client": clients}},
+            **_cookie_opt(),
+        }
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+
+            if "entries" in info:
+                info = info["entries"][0]
+
+            formats = info.get("formats") or []
+
+            # Pick best audio-only format with a direct http URL
+            audio_only = [
+                f for f in formats
+                if f.get("vcodec") in (None, "none", "")
+                and f.get("url", "").startswith("http")
+            ]
+
+            if not audio_only:
+                # Fall back to any format with a direct URL
+                audio_only = [f for f in formats if f.get("url", "").startswith("http")]
+
+            if not audio_only:
+                raise ValueError(f"No usable formats for client={clients}")
+
+            best = max(audio_only, key=lambda f: (f.get("abr") or 0) + (f.get("tbr") or 0))
+            stream_url = best["url"]
+            ext = best.get("ext") or "m4a"
+
+            log.info("Stream OK client=%s ext=%s abr=%s", clients, ext, best.get("abr"))
+
+            return {
+                "stream_url":   stream_url,
+                "http_headers": best.get("http_headers", {}),
+                "ext":          ext,
+                "title":        info.get("title", "Unknown"),
+                "artist":       info.get("uploader") or info.get("channel") or "Unknown Artist",
+                "album":        info.get("album") or info.get("playlist_title") or "YouTube",
+                "duration":     info.get("duration"),
+                "thumbnail":    info.get("thumbnail"),
             }
-            try:
-                with yt_dlp.YoutubeDL(opts) as ydl:
-                    info = ydl.extract_info(url, download=False)
 
-                if "entries" in info:
-                    info = info["entries"][0]
-
-                formats = info.get("formats", [])
-
-                # Prefer audio-only, fall back to any format
-                audio_only = [
-                    f for f in formats
-                    if f.get("vcodec") in (None, "none") and f.get("url")
-                ]
-                if audio_only:
-                    best = max(audio_only, key=lambda f: f.get("abr") or f.get("tbr") or 0)
-                elif formats:
-                    best = max(formats, key=lambda f: f.get("abr") or f.get("tbr") or 0)
-                    if not best.get("url"):
-                        best = formats[-1]
-                else:
-                    best = {}
-
-                stream_url = best.get("url") or info.get("url")
-                if not stream_url:
-                    raise ValueError("No stream URL in extracted info")
-
-                ext = best.get("ext") or info.get("ext") or "webm"
-                log.info("Stream resolved: fmt=%s ext=%s client=%s", fmt, ext, client_opts)
-
-                return {
-                    "stream_url":   stream_url,
-                    "http_headers": best.get("http_headers", {}),
-                    "ext":          ext,
-                    "title":        info.get("title", "Unknown"),
-                    "artist":       info.get("uploader") or info.get("channel") or "Unknown Artist",
-                    "album":        info.get("album") or info.get("playlist_title") or "YouTube",
-                    "duration":     info.get("duration"),
-                    "thumbnail":    info.get("thumbnail"),
-                }
-            except yt_dlp.utils.DownloadError as e:
-                last_error = e
-                log.warning("Stream attempt failed (fmt=%s): %s", fmt, e)
-                continue
-            except Exception as e:
-                last_error = e
-                log.warning("Stream attempt error (fmt=%s): %s", fmt, e)
-                continue
+        except yt_dlp.utils.DownloadError as e:
+            last_error = e
+            log.warning("Stream attempt failed (client=%s): %s", clients, e)
+            continue
+        except Exception as e:
+            last_error = e
+            log.warning("Stream attempt error (client=%s): %s", clients, e)
+            continue
 
     raise last_error or ValueError("All stream extraction attempts failed")
 
