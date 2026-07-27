@@ -185,6 +185,61 @@ def _get_stream_info(url: str) -> dict:
     ]
 
     proxy = os.getenv("YT_PROXY", "").strip() or None
+
+    # Try Invidious API first — runs on non-datacenter IPs, bypasses Railway block
+    invidious_instances = [
+        "https://inv.nadeko.net",
+        "https://invidious.nerdvpn.de",
+        "https://invidious.privacyredirect.com",
+    ]
+    video_id = None
+    if "v=" in url:
+        video_id = url.split("v=")[-1].split("&")[0]
+    elif "youtu.be/" in url:
+        video_id = url.split("youtu.be/")[-1].split("?")[0]
+
+    if video_id:
+        for instance in invidious_instances:
+            try:
+                resp = httpx.get(
+                    f"{instance}/api/v1/videos/{video_id}",
+                    timeout=10, follow_redirects=True,
+                    headers={"User-Agent": "Mozilla/5.0"},
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    # Pick best audio format
+                    audio_formats = [
+                        f for f in data.get("adaptiveFormats", [])
+                        if f.get("type", "").startswith("audio/")
+                        and f.get("url")
+                    ]
+                    if not audio_formats:
+                        audio_formats = [
+                            f for f in data.get("formatStreams", [])
+                            if f.get("url")
+                        ]
+                    if audio_formats:
+                        best = max(audio_formats, key=lambda f: f.get("bitrate") or 0)
+                        log.info("Stream via Invidious (%s) OK", instance)
+                        return {
+                            "stream_url":   best["url"],
+                            "http_headers": {},
+                            "ext":          "webm",
+                            "title":        data.get("title", "Unknown"),
+                            "artist":       data.get("author") or "Unknown Artist",
+                            "album":        "YouTube",
+                            "duration":     data.get("lengthSeconds"),
+                            "thumbnail":    next(
+                                (t["url"] for t in data.get("videoThumbnails", [])
+                                 if t.get("quality") == "maxres"),
+                                data.get("videoThumbnails", [{}])[0].get("url") if data.get("videoThumbnails") else None
+                            ),
+                        }
+            except Exception as e:
+                log.warning("Invidious %s failed: %s", instance, e)
+                continue
+
     last_error = None
     for clients in client_attempts:
         opts = {
