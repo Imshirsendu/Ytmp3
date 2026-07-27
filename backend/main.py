@@ -150,46 +150,84 @@ def _download_audio(url: str, work_dir: Path) -> tuple[Path, dict]:
 def _get_stream_info(url: str) -> dict:
     """
     Extract audio stream URL + headers + metadata.
-    Uses web client with cookies — cookies solve Railway bot detection.
-    Returns CDN url + http_headers needed to proxy it.
+    Uses android player client to bypass bot detection on Railway.
+    Tries multiple format strategies so something always works.
     """
-    opts = {
-        "quiet": True,
-        "no_warnings": True,
-        "skip_download": True,
-        "socket_timeout": 20,
-        **_cookie_opt(),
-    }
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(url, download=False)
+    # Try each format string in order until one succeeds
+    format_attempts = [
+        "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best",
+        "bestaudio/best",
+        "best",
+    ]
+    # Try android client first (avoids bot detection), fall back to web
+    client_attempts = [
+        {"extractor_args": {"youtube": {"player_client": ["android"]}}},
+        {"extractor_args": {"youtube": {"player_client": ["web"]}}},
+        {},
+    ]
 
-    if "entries" in info:
-        info = info["entries"][0]
+    last_error = None
+    for client_opts in client_attempts:
+        for fmt in format_attempts:
+            opts = {
+                "format": fmt,
+                "quiet": True,
+                "no_warnings": True,
+                "skip_download": True,
+                "socket_timeout": 20,
+                **client_opts,
+                **_cookie_opt(),
+            }
+            try:
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    info = ydl.extract_info(url, download=False)
 
-    formats = info.get("formats", [])
-    audio_only = [f for f in formats if f.get("vcodec") == "none" and f.get("url")]
+                if "entries" in info:
+                    info = info["entries"][0]
 
-    if audio_only:
-        best = max(audio_only, key=lambda f: f.get("abr") or f.get("tbr") or 0)
-    elif formats:
-        best = formats[-1]
-    else:
-        raise ValueError("No formats found")
+                formats = info.get("formats", [])
 
-    stream_url = best.get("url") or info.get("url")
-    if not stream_url:
-        raise ValueError("Could not extract stream URL")
+                # Prefer audio-only, fall back to any format
+                audio_only = [
+                    f for f in formats
+                    if f.get("vcodec") in (None, "none") and f.get("url")
+                ]
+                if audio_only:
+                    best = max(audio_only, key=lambda f: f.get("abr") or f.get("tbr") or 0)
+                elif formats:
+                    best = max(formats, key=lambda f: f.get("abr") or f.get("tbr") or 0)
+                    if not best.get("url"):
+                        best = formats[-1]
+                else:
+                    best = {}
 
-    return {
-        "stream_url":   stream_url,
-        "http_headers": best.get("http_headers", {}),
-        "ext":          best.get("ext", "webm"),
-        "title":        info.get("title", "Unknown"),
-        "artist":       info.get("uploader") or info.get("channel") or "Unknown Artist",
-        "album":        info.get("album") or info.get("playlist_title") or "YouTube",
-        "duration":     info.get("duration"),
-        "thumbnail":    info.get("thumbnail"),
-    }
+                stream_url = best.get("url") or info.get("url")
+                if not stream_url:
+                    raise ValueError("No stream URL in extracted info")
+
+                ext = best.get("ext") or info.get("ext") or "webm"
+                log.info("Stream resolved: fmt=%s ext=%s client=%s", fmt, ext, client_opts)
+
+                return {
+                    "stream_url":   stream_url,
+                    "http_headers": best.get("http_headers", {}),
+                    "ext":          ext,
+                    "title":        info.get("title", "Unknown"),
+                    "artist":       info.get("uploader") or info.get("channel") or "Unknown Artist",
+                    "album":        info.get("album") or info.get("playlist_title") or "YouTube",
+                    "duration":     info.get("duration"),
+                    "thumbnail":    info.get("thumbnail"),
+                }
+            except yt_dlp.utils.DownloadError as e:
+                last_error = e
+                log.warning("Stream attempt failed (fmt=%s): %s", fmt, e)
+                continue
+            except Exception as e:
+                last_error = e
+                log.warning("Stream attempt error (fmt=%s): %s", fmt, e)
+                continue
+
+    raise last_error or ValueError("All stream extraction attempts failed")
 
 
 # ─── Routes ─────────────────────────────────────────────────────────────────
