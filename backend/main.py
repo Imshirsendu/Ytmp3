@@ -33,21 +33,39 @@ log = logging.getLogger("ytmp3")
 DOWNLOAD_DIR = Path(os.getenv("DOWNLOAD_DIR", "/tmp/ytmp3"))
 DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-COOKIES_FILE = Path(__file__).parent / "cookies.txt"
-
 SPONSORBLOCK_CATS = ["sponsor", "intro", "outro", "selfpromo", "interaction"]
 
+# ─── Cookies from env var ────────────────────────────────────────────────────
+# Set YT_COOKIES env var in Railway dashboard with the full cookies.txt content.
+# On startup we write it to a temp file so yt-dlp can read it.
+
+_COOKIES_PATH: str | None = None
+
+def _init_cookies() -> None:
+    global _COOKIES_PATH
+    cookie_content = os.getenv("YT_COOKIES", "").strip()
+    if not cookie_content:
+        # Fallback: try cookies.txt next to main.py (for local dev)
+        local = Path(__file__).parent / "cookies.txt"
+        if local.exists():
+            _COOKIES_PATH = str(local)
+            log.info("Cookies loaded from local file: %s", _COOKIES_PATH)
+        else:
+            log.warning("No YT_COOKIES env var and no local cookies.txt — bot detection likely")
+        return
+    tmp = Path(tempfile.gettempdir()) / "yt_cookies.txt"
+    tmp.write_text(cookie_content, encoding="utf-8")
+    _COOKIES_PATH = str(tmp)
+    log.info("Cookies written from env var → %s", _COOKIES_PATH)
 
 def _cookie_opt() -> dict:
-    """Return cookiefile opt if cookies.txt exists alongside main.py."""
-    if COOKIES_FILE.exists():
-        return {"cookiefile": str(COOKIES_FILE)}
-    return {}
+    return {"cookiefile": _COOKIES_PATH} if _COOKIES_PATH else {}
 
 
 # ─── App lifespan ───────────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _init_cookies()
     log.info("YT-MP3 backend starting – download dir: %s", DOWNLOAD_DIR)
     yield
     log.info("YT-MP3 backend shutting down")
