@@ -177,19 +177,15 @@ def _get_stream_url(url: str) -> dict:
     Extract the direct audio stream URL from YouTube without downloading.
     Returns the best audio format URL plus metadata.
     """
-    # Android client bypasses bot detection natively.
-    # MUST set cookiefile=None explicitly — if a cookies env var is present,
-    # yt-dlp skips android/ios clients entirely since they don't support cookies.
+    # Use web client WITH cookies — cookies solve bot detection on Railway.
+    # Android client does not support cookies so we use web here.
     opts = {
         "format": "bestaudio/best",
         "quiet": True,
         "no_warnings": True,
         "skip_download": True,
         "socket_timeout": 20,
-        "cookiefile": None,   # force no cookies → android client won't be skipped
-        "extractor_args": {
-            "youtube": {"player_client": ["android"]},
-        },
+        **_cookie_opt(),
     }
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=False)
@@ -248,10 +244,7 @@ async def search_youtube(
         "no_warnings": True,
         "skip_download": True,
         "extract_flat": True,
-        "cookiefile": None,
-        "extractor_args": {
-            "youtube": {"player_client": ["android"]},
-        },
+        **_cookie_opt(),
     }
 
     try:
