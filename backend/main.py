@@ -10,6 +10,8 @@ import shutil
 import asyncio
 import logging
 import tempfile
+import subprocess
+import sys
 from pathlib import Path
 from contextlib import asynccontextmanager
 
@@ -55,8 +57,27 @@ def _cookie_opt() -> dict:
     return {"cookiefile": _COOKIES_PATH} if _COOKIES_PATH else {}
 
 
+def _update_ytdlp() -> None:
+    """Update yt-dlp to latest version on startup — prevents format errors from stale builds."""
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp", "--quiet"],
+            capture_output=True, text=True, timeout=60
+        )
+        if result.returncode == 0:
+            import importlib
+            import yt_dlp as _yt
+            importlib.reload(_yt)
+            log.info("yt-dlp updated successfully")
+        else:
+            log.warning("yt-dlp update failed: %s", result.stderr)
+    except Exception as e:
+        log.warning("yt-dlp update skipped: %s", e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _update_ytdlp()
     _init_cookies()
     log.info("YT-MP3 backend starting – download dir: %s", DOWNLOAD_DIR)
     yield
