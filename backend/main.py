@@ -179,9 +179,9 @@ def _get_stream_url(url: str) -> dict:
     Returns the best audio format URL plus metadata.
     """
     opts = {
-        "format": "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best",
-        "quiet": True,
-        "no_warnings": True,
+        "format": "bestaudio/best",
+        "quiet": False,
+        "no_warnings": False,
         "skip_download": True,
         "socket_timeout": 20,
         "extractor_args": {
@@ -194,6 +194,12 @@ def _get_stream_url(url: str) -> dict:
 
     if "entries" in info:
         info = info["entries"][0]
+
+    # Log available formats for debugging
+    formats = info.get("formats", [])
+    log.info("Available formats for %s: %s", url,
+             [(f.get("format_id"), f.get("ext"), f.get("vcodec"), f.get("acodec"), f.get("abr"))
+              for f in formats[-5:]])
 
     # Find the best audio-only format URL
     stream_url = None
