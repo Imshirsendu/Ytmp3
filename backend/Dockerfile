@@ -1,12 +1,20 @@
 # ── Stage 1: base image ────────────────────────────────────────────────────
 FROM python:3.11-slim
 
-# Install FFmpeg (required by yt-dlp for audio conversion + thumbnail embedding)
+# Install FFmpeg, AtomicParsley, Node.js 20
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ffmpeg \
         atomicparsley \
+        curl \
+        ca-certificates \
+        gnupg \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
+
+# Install bgutil HTTP server globally
+RUN npm install -g @imputnet/bgutil-ytdlp-pot-provider
 
 WORKDIR /app
 
@@ -22,5 +30,5 @@ RUN mkdir -p /tmp/ytmp3
 
 EXPOSE 8000
 
-# Run with auto-reload disabled in production
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+# Start bgutil PO token server, then uvicorn
+CMD bgutil-ytdlp-pot-provider serve & sleep 3 && uvicorn main:app --host 0.0.0.0 --port 8000 --workers 2

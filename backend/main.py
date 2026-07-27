@@ -124,6 +124,7 @@ def _build_ydl_opts(out_tmpl: str) -> dict:
             {"key": "ModifyChapters", "remove_sponsor_segments": SPONSORBLOCK_CATS},
         ],
         "writethumbnail": True,
+        **_cookie_opt(),
         "embedthumbnail": True,
     }
 
@@ -179,8 +180,9 @@ def _get_stream_info(url: str) -> dict:
     """
     client_attempts = [
         ["ios"],
-        ["android"],
         ["tv_embedded"],
+        ["android"],
+        ["mweb"],
         ["web"],
     ]
 
