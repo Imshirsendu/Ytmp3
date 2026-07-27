@@ -192,9 +192,12 @@ def _get_stream_info(url: str) -> dict:
             "no_warnings": True,
             "skip_download": True,
             "socket_timeout": 30,
+            "check_formats": False,          # skip format availability check
+            "nocheckcertificate": True,
             "extractor_args": {
                 "youtube": {
                     "player_client": clients,
+                    "skip": ["dash", "hls"],  # skip formats that need special handling
                 }
             },
             **_cookie_opt(),
