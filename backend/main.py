@@ -100,9 +100,8 @@ def _build_ydl_opts(out_tmpl: str) -> dict:
         "no_warnings": True,
         "socket_timeout": 30,
         "extractor_args": {
-            "youtube": {"player_client": ["web", "android", "ios"]},
+            "youtube": {"player_client": ["android"]},
         },
-        **_cookie_opt(),
         "postprocessors": [
             {
                 "key": "FFmpegExtractAudio",
@@ -178,28 +177,23 @@ def _get_stream_url(url: str) -> dict:
     Extract the direct audio stream URL from YouTube without downloading.
     Returns the best audio format URL plus metadata.
     """
+    # Android client bypasses bot detection natively and doesn't need cookies.
+    # Web client fails n-challenge on Railway (no JS runtime).
     opts = {
         "format": "bestaudio/best",
-        "quiet": False,
-        "no_warnings": False,
+        "quiet": True,
+        "no_warnings": True,
         "skip_download": True,
         "socket_timeout": 20,
         "extractor_args": {
-            "youtube": {"player_client": ["web", "android", "ios"]},
+            "youtube": {"player_client": ["android"]},
         },
-        **_cookie_opt(),
     }
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=False)
 
     if "entries" in info:
         info = info["entries"][0]
-
-    # Log available formats for debugging
-    formats = info.get("formats", [])
-    log.info("Available formats for %s: %s", url,
-             [(f.get("format_id"), f.get("ext"), f.get("vcodec"), f.get("acodec"), f.get("abr"))
-              for f in formats[-5:]])
 
     # Find the best audio-only format URL
     stream_url = None
@@ -253,9 +247,8 @@ async def search_youtube(
         "skip_download": True,
         "extract_flat": True,
         "extractor_args": {
-            "youtube": {"player_client": ["web", "android", "ios"]},
+            "youtube": {"player_client": ["android"]},
         },
-        **_cookie_opt(),
     }
 
     try:
@@ -300,9 +293,8 @@ async def get_info(url: str = Query(..., description="YouTube video URL")):
         "no_warnings": True,
         "skip_download": True,
         "extractor_args": {
-            "youtube": {"player_client": ["web", "android", "ios"]},
+            "youtube": {"player_client": ["android"]},
         },
-        **_cookie_opt(),
     }
     try:
         loop = asyncio.get_event_loop()
