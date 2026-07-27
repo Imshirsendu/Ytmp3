@@ -234,6 +234,7 @@ def _get_stream_info(url: str) -> dict:
                     "skip": ["dash", "hls"],  # skip formats that need special handling
                 }
             },
+            "js_runtimes": {"node": {"path": "/usr/bin/node"}},
             **_cookie_opt(),
             **({"proxy": proxy} if proxy else {}),
         }
