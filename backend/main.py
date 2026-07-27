@@ -179,7 +179,7 @@ def _get_stream_url(url: str) -> dict:
     Returns the best audio format URL plus metadata.
     """
     opts = {
-        "format": "bestaudio/best",
+        "format": "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best",
         "quiet": True,
         "no_warnings": True,
         "skip_download": True,
@@ -187,7 +187,6 @@ def _get_stream_url(url: str) -> dict:
         "extractor_args": {
             "youtube": {"player_client": ["android_vr", "android", "web"]},
         },
-        "compat_opts": {"no-youtube-unavailable-videos"},
         **_cookie_opt(),
     }
     with yt_dlp.YoutubeDL(opts) as ydl:
