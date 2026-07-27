@@ -193,7 +193,7 @@ def _get_stream_info(url: str) -> dict:
             resp = httpx.get(
                 f"{cf_worker}/extract",
                 params={"url": url},
-                timeout=15,
+                timeout=30,
                 follow_redirects=True,
             )
             if resp.status_code == 200:
@@ -377,7 +377,7 @@ async def stream_info_endpoint(url: str = Query(...)):
         raise HTTPException(status_code=400, detail="url required")
     try:
         loop = asyncio.get_event_loop()
-        result = await asyncio.wait_for(loop.run_in_executor(None, _get_stream_info, url), timeout=25)
+        result = await asyncio.wait_for(loop.run_in_executor(None, _get_stream_info, url), timeout=40)
         return JSONResponse({
             "title":      result["title"],
             "artist":     result["artist"],
@@ -411,7 +411,7 @@ async def stream(
 
     try:
         loop = asyncio.get_event_loop()
-        info = await asyncio.wait_for(loop.run_in_executor(None, _get_stream_info, url), timeout=25)
+        info = await asyncio.wait_for(loop.run_in_executor(None, _get_stream_info, url), timeout=40)
     except asyncio.TimeoutError:
         raise HTTPException(status_code=504, detail="Stream info timed out")
     except yt_dlp.utils.DownloadError as e:
