@@ -100,7 +100,7 @@ def _build_ydl_opts(out_tmpl: str) -> dict:
         "no_warnings": True,
         "socket_timeout": 30,
         "extractor_args": {
-            "youtube": {"player_client": ["android_vr", "android", "web"]},
+            "youtube": {"player_client": ["web", "android", "ios"]},
         },
         **_cookie_opt(),
         "postprocessors": [
@@ -185,7 +185,7 @@ def _get_stream_url(url: str) -> dict:
         "skip_download": True,
         "socket_timeout": 20,
         "extractor_args": {
-            "youtube": {"player_client": ["android_vr", "android", "web"]},
+            "youtube": {"player_client": ["web", "android", "ios"]},
         },
         **_cookie_opt(),
     }
@@ -247,7 +247,7 @@ async def search_youtube(
         "skip_download": True,
         "extract_flat": True,
         "extractor_args": {
-            "youtube": {"player_client": ["android_vr", "android", "web"]},
+            "youtube": {"player_client": ["web", "android", "ios"]},
         },
         **_cookie_opt(),
     }
@@ -294,7 +294,7 @@ async def get_info(url: str = Query(..., description="YouTube video URL")):
         "no_warnings": True,
         "skip_download": True,
         "extractor_args": {
-            "youtube": {"player_client": ["android_vr", "android", "web"]},
+            "youtube": {"player_client": ["web", "android", "ios"]},
         },
         **_cookie_opt(),
     }
