@@ -188,9 +188,12 @@ def _get_stream_info(url: str) -> dict:
 
     # Try Invidious API first — runs on non-datacenter IPs, bypasses Railway block
     invidious_instances = [
-        "https://inv.nadeko.net",
+        "https://invidious.perennialte.ch",
+        "https://iv.melmac.space",
+        "https://invidious.io.lol",
         "https://invidious.nerdvpn.de",
-        "https://invidious.privacyredirect.com",
+        "https://yt.drgnz.club",
+        "https://invidious.fdn.fr",
     ]
     video_id = None
     if "v=" in url:
