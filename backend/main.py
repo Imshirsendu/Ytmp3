@@ -37,6 +37,9 @@ SPONSORBLOCK_CATS = ["sponsor", "intro", "outro", "selfpromo", "interaction"]
 
 _COOKIES_PATH: str | None = None
 
+# Limit concurrent yt-dlp calls to prevent OOM kills on free tier (512MB RAM)
+_YDL_SEMAPHORE = asyncio.Semaphore(2)
+
 def _init_cookies() -> None:
     global _COOKIES_PATH
     content = os.getenv("YT_COOKIES", "").strip()
@@ -381,7 +384,8 @@ async def stream_info_endpoint(url: str = Query(...)):
         raise HTTPException(status_code=400, detail="url required")
     try:
         loop = asyncio.get_event_loop()
-        result = await asyncio.wait_for(loop.run_in_executor(None, _get_stream_info, url), timeout=40)
+        async with _YDL_SEMAPHORE:
+            result = await asyncio.wait_for(loop.run_in_executor(None, _get_stream_info, url), timeout=40)
         return JSONResponse({
             "title":      result["title"],
             "artist":     result["artist"],
@@ -415,7 +419,8 @@ async def stream(
 
     try:
         loop = asyncio.get_event_loop()
-        info = await asyncio.wait_for(loop.run_in_executor(None, _get_stream_info, url), timeout=40)
+        async with _YDL_SEMAPHORE:
+            info = await asyncio.wait_for(loop.run_in_executor(None, _get_stream_info, url), timeout=40)
     except asyncio.TimeoutError:
         raise HTTPException(status_code=504, detail="Stream info timed out")
     except yt_dlp.utils.DownloadError as e:
@@ -472,10 +477,11 @@ async def download(url: str = Query(...)):
     try:
         log.info("Download request → %s", url)
         loop = asyncio.get_event_loop()
-        mp3_path, info = await asyncio.wait_for(
-            loop.run_in_executor(None, _download_audio, url, work_dir),
-            timeout=300,
-        )
+        async with _YDL_SEMAPHORE:
+            mp3_path, info = await asyncio.wait_for(
+                loop.run_in_executor(None, _download_audio, url, work_dir),
+                timeout=300,
+            )
         _embed_metadata(mp3_path, info)
         filename = mp3_path.name
         log.info("Serving → %s (%d bytes)", filename, mp3_path.stat().st_size)
@@ -542,7 +548,8 @@ async def get_playlist(
         def _fetch():
             with yt_dlp.YoutubeDL(opts) as ydl:
                 return ydl.extract_info(playlist_url, download=False)
-        info = await asyncio.wait_for(loop.run_in_executor(None, _fetch), timeout=30)
+        async with _YDL_SEMAPHORE:
+            info = await asyncio.wait_for(loop.run_in_executor(None, _fetch), timeout=30)
 
         results = []
         for entry in (info.get("entries") or []):
