@@ -15,5 +15,9 @@ for i in $(seq 1 10); do
     sleep 1
 done
 
+echo "[start] Installing/updating yt-dlp and bgutil plugin (once, before workers fork)..."
+pip install --upgrade yt-dlp bgutil-ytdlp-pot-provider --quiet
+echo "[start] pip installs done"
+
 echo "[start] Starting uvicorn..."
 exec uvicorn main:app --host 0.0.0.0 --port 8000 --workers 2
