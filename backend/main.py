@@ -330,7 +330,8 @@ async def search_youtube(
         def _search():
             with yt_dlp.YoutubeDL(opts) as ydl:
                 return ydl.extract_info(f"ytsearch{limit}:{q}", download=False)
-        info = await asyncio.wait_for(loop.run_in_executor(None, _search), timeout=15)
+        async with _YDL_SEMAPHORE:
+            info = await asyncio.wait_for(loop.run_in_executor(None, _search), timeout=15)
         results = []
         for entry in (info.get("entries") or []):
             if not entry:
