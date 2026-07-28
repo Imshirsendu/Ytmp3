@@ -7,17 +7,29 @@ import 'package:uuid/uuid.dart';
 import 'package:media_scanner/media_scanner.dart';
 
 import '../models/track.dart';
+import 'settings_provider.dart';
 
 class DownloadProvider extends ChangeNotifier {
   final _jobs = <String, DownloadJob>{};
-  final _dio = Dio();
+  final _dio  = Dio();
   final _uuid = const Uuid();
+
+  /// Injected so we can read the current bitrate setting.
+  SettingsProvider? _settings;
+
+  void attachSettings(SettingsProvider settings) {
+    _settings = settings;
+  }
 
   List<DownloadJob> get jobs =>
       _jobs.values.toList().reversed.toList();
 
   /// [title] should be the video title from search results so the saved
   /// filename is human-readable. Falls back to a UUID if not provided.
+  ///
+  /// [serverDownloadUrl] is the base download URL from the server
+  /// (e.g. https://yourserver.com/download?url=...). The bitrate param
+  /// is appended automatically from the current setting.
   Future<void> enqueue(
     String url,
     String serverDownloadUrl, {
@@ -27,15 +39,22 @@ class DownloadProvider extends ChangeNotifier {
       debugPrint('DownloadProvider: invalid URL — url=$url dl=$serverDownloadUrl');
       return;
     }
+
+    // Append bitrate param if not already present
+    final bitrateValue = _settings?.bitrate.value ?? 192;
+    final dlUrl = serverDownloadUrl.contains('bitrate=')
+        ? serverDownloadUrl
+        : '$serverDownloadUrl${serverDownloadUrl.contains('?') ? '&' : '?'}bitrate=$bitrateValue';
+
     final job = DownloadJob(
-      id: _uuid.v4(),
-      url: url,
+      id:    _uuid.v4(),
+      url:   url,
       title: title ?? 'Downloading…',
     );
     _jobs[job.id] = job;
     notifyListeners();
-    debugPrint('DownloadProvider: starting download → $serverDownloadUrl');
-    await _runJob(job, serverDownloadUrl, title: title);
+    debugPrint('DownloadProvider: starting download → $dlUrl (${bitrateValue}kbps)');
+    await _runJob(job, dlUrl, title: title);
   }
 
   Future<void> _runJob(
@@ -51,8 +70,7 @@ class DownloadProvider extends ChangeNotifier {
       return;
     }
 
-    // Use the video title as filename (sanitised), fallback to job id
-    final safeName = _safeFilename(title ?? job.id);
+    final safeName  = _safeFilename(title ?? job.id);
     final finalPath = '${dir.path}/$safeName.mp3';
 
     job.status = DownloadStatus.downloading;
@@ -71,16 +89,13 @@ class DownloadProvider extends ChangeNotifier {
         },
         options: Options(
           receiveTimeout: const Duration(minutes: 10),
-          // ResponseType must NOT be bytes for dio.download() — it handles streaming internally
         ),
       );
 
-      job.title = title ?? safeName;
-      job.status = DownloadStatus.done;
+      job.title    = title ?? safeName;
+      job.status   = DownloadStatus.done;
       job.progress = 1.0;
 
-      // Tell Android MediaStore about the new file so it appears in file
-      // managers and music apps immediately without needing a device reboot.
       if (Platform.isAndroid) {
         try {
           await MediaScanner.loadMedia(path: finalPath);
@@ -90,23 +105,18 @@ class DownloadProvider extends ChangeNotifier {
       }
     } on DioException catch (e) {
       await File(finalPath).delete().catchError((_) => File(finalPath));
-      job.status = DownloadStatus.error;
+      job.status       = DownloadStatus.error;
       job.errorMessage = _friendlyError(e);
     } catch (e) {
-      job.status = DownloadStatus.error;
+      job.status       = DownloadStatus.error;
       job.errorMessage = e.toString();
     }
 
     notifyListeners();
   }
 
-  /// Resolves to /sdcard/Music/YT-MP3 on Android (visible in file manager).
-  /// Falls back to app-private documents on iOS or if permission is denied.
   Future<Directory?> _musicDir() async {
     if (Platform.isAndroid) {
-      // Android 13+ (API 33+): Permission.storage is deprecated, use Permission.audio.
-      // Android 10-12: needs Permission.storage.
-      // Request both — whichever applies will be granted by the OS.
       final results = await [Permission.storage, Permission.audio].request();
       final granted = (results[Permission.storage]?.isGranted ?? false) ||
                       (results[Permission.audio]?.isGranted ?? false);
@@ -115,9 +125,9 @@ class DownloadProvider extends ChangeNotifier {
       try {
         final ext = await getExternalStorageDirectory();
         if (ext != null) {
-          final parts = ext.path.split('/');
+          final parts      = ext.path.split('/');
           final androidIdx = parts.indexOf('Android');
-          final sdcard = androidIdx > 0
+          final sdcard     = androidIdx > 0
               ? parts.sublist(0, androidIdx).join('/')
               : ext.path;
           final dir = Directory('$sdcard/Music/YT-MP3');
@@ -126,18 +136,16 @@ class DownloadProvider extends ChangeNotifier {
         }
       } catch (_) {}
     }
-
     return _fallbackDir();
   }
 
   Future<Directory> _fallbackDir() async {
     final base = await getApplicationDocumentsDirectory();
-    final dir = Directory('${base.path}/Music');
+    final dir  = Directory('${base.path}/Music');
     if (!dir.existsSync()) dir.createSync(recursive: true);
     return dir;
   }
 
-  /// Strips characters that are illegal in Android filenames.
   String _safeFilename(String raw) {
     final sanitized = raw
         .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
@@ -148,7 +156,7 @@ class DownloadProvider extends ChangeNotifier {
 
   String _friendlyError(DioException e) {
     if (e.type == DioExceptionType.connectionTimeout) return 'Server unreachable';
-    if (e.type == DioExceptionType.receiveTimeout) return 'Download timed out';
+    if (e.type == DioExceptionType.receiveTimeout)    return 'Download timed out';
     if (e.response?.statusCode == 404) return 'Video not found or private';
     if (e.response?.statusCode == 422) return 'Invalid URL';
     return e.message ?? 'Unknown error';

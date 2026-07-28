@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:id3tag/id3tag.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../models/track.dart';
@@ -43,18 +44,56 @@ class LibraryProvider extends ChangeNotifier {
           try {
             final stat  = f.statSync();
             final name  = f.path.split('/').last.split('\\').last;
-            final title = name.endsWith('.mp3')
+            final rawTitle = name.endsWith('.mp3')
                 ? name.substring(0, name.length - 4)
                 : name;
+
+            // Read ID3 tags for real artist/duration
+            String title  = rawTitle;
+            String artist = 'Unknown Artist';
+            Duration duration = Duration.zero;
+            Uint8List? coverArt;
+
+            try {
+              final parser = ID3TagReader.path(f.path);
+              final tag    = await parser.readTag();
+
+              if (tag.title != null && tag.title!.isNotEmpty) {
+                title = tag.title!;
+              }
+              if (tag.artist != null && tag.artist!.isNotEmpty) {
+                artist = tag.artist!;
+              }
+              // id3tag exposes pictures; duration comes from audio header
+              if (tag.pictures.isNotEmpty) {
+                coverArt = Uint8List.fromList(tag.pictures.first.imageData);
+              }
+            } catch (_) {
+              // Tag read failed — fall back to filename / unknowns
+            }
+
+            // Try to get duration from the audio pipeline length if available
+            // id3tag doesn't expose duration directly; use file stat size as
+            // a rough heuristic: assume ~128kbps = 16KB/s
+            if (duration == Duration.zero) {
+              try {
+                final bytes   = f.lengthSync();
+                final seconds = (bytes / 16000).round(); // rough 128kbps estimate
+                if (seconds > 0) {
+                  duration = Duration(seconds: seconds);
+                }
+              } catch (_) {}
+            }
+
             tracks.add(Track(
               id:        f.path,
               filePath:  f.path,
               title:     title,
-              artist:    'Unknown Artist',
+              artist:    artist,
               album:     'YT-MP3',
-              duration:  Duration.zero,
+              duration:  duration,
               dateAdded: stat.modified,
-              coverArt:  null,
+              coverArt:  coverArt,
             ));
           } catch (_) {}
         }

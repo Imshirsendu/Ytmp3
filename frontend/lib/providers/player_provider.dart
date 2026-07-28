@@ -340,6 +340,8 @@ class PlayerProvider extends ChangeNotifier {
     try {
       await _player.setFilePath(track.filePath);
       _suppressCompletion = false;
+      // Re-apply EQ preset — Android resets EQ state on each new audio source
+      if (_eqReady) await setEqPreset(_eqPreset);
       await _player.play();
       _logTrack(track);
     } catch (_) {
@@ -369,6 +371,8 @@ class PlayerProvider extends ChangeNotifier {
     try {
       await _player.setUrl(st.streamUrl);
       _suppressCompletion = false; // track is loaded — completions are real now
+      // Re-apply EQ preset — Android resets EQ state on each new audio source
+      if (_eqReady) await setEqPreset(_eqPreset);
       await _player.play();
       _logStream(st);
     } catch (e) {
