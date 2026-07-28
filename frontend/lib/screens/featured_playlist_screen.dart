@@ -150,9 +150,10 @@ class _FeaturedPlaylistScreenState extends State<FeaturedPlaylistScreen> {
       final index = _tracks.indexOf(result);
       await player.playStreamFromPlaylist(
         st,
-        playlist:  _tracks,
-        index:     index < 0 ? 0 : index,
-        serverUrl: server.serverUrl,
+        playlist:         _tracks,
+        index:            index < 0 ? 0 : index,
+        serverUrl:        server.serverUrl,
+        featuredPlaylist: widget.playlist,
       );
       if (andOpenPlayer && context.mounted) PlayerScreen.show(context);
     } catch (e) {

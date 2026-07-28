@@ -44,67 +44,96 @@ class PlayerScreen extends StatelessWidget {
             style: tt.labelSmall?.copyWith(letterSpacing: 2)),
         centerTitle: true,
         actions: [
-          // ── Add to playlist button (streams only) ────────────────────
-          Consumer<PlayerProvider>(
-            builder: (ctx, player, _) {
-              final now = player.current;
-              if (now == null || !now.isStream) return const SizedBox.shrink();
-              return IconButton(
-                icon: const Icon(Icons.playlist_add_rounded),
-                tooltip: 'Add to playlist',
-                onPressed: () =>
-                    _AddToPlaylistSheet.show(context, now.stream!),
-              );
-            },
-          ),
-          // ── Share button ─────────────────────────────────────────────
-          Consumer<PlayerProvider>(
-            builder: (ctx, player, _) {
-              final now = player.current;
-              if (now == null) return const SizedBox.shrink();
-              final url = now.isStream
-                  ? now.stream!.youtubeUrl
-                  : null; // local tracks don't have a URL to share
-              if (url == null) return const SizedBox.shrink();
-              return IconButton(
-                icon: const Icon(Icons.share_outlined),
-                tooltip: 'Share',
-                onPressed: () => Share.share(
-                  '🎵 ${now.title} — ${now.artist}\n$url',
-                  subject: now.title,
-                ),
-              );
-            },
-          ),
-          // ── Sleep timer button ───────────────────────────────────────
+          // ── Equalizer — always visible, has active-state colour ───────
           Consumer<PlayerProvider>(
             builder: (ctx, player, _) => IconButton(
               icon: Icon(
-                Icons.bedtime_outlined,
-                color: player.sleepTimerActive ? cs.primary : null,
+                Icons.equalizer_rounded,
+                color: player.eqPreset != EqPreset.flat
+                    ? cs.primary
+                    : null,
               ),
-              tooltip: 'Sleep timer',
-              onPressed: () => _SleepTimerSheet.show(context),
-            ),
-          ),
-          // ── Equalizer button ─────────────────────────────────────────
-          Consumer<PlayerProvider>(
-            builder: (ctx, player, _) => IconButton(
-              icon: const Icon(Icons.equalizer_rounded),
               tooltip: 'Equalizer',
               onPressed: () => _EqSheet.show(context),
             ),
           ),
-          // ── Queue button ─────────────────────────────────────────────
+          // ── Overflow menu ─────────────────────────────────────────────
           Consumer<PlayerProvider>(
-            builder: (ctx, player, _) =>
-                !player.current!.isStream && player.queue.isNotEmpty
-                    ? IconButton(
-                        icon: const Icon(Icons.queue_music_outlined),
-                        tooltip: 'Queue',
-                        onPressed: () => QueueScreen.show(context),
-                      )
-                    : const SizedBox.shrink(),
+            builder: (ctx, player, _) {
+              final now = player.current;
+              if (now == null) return const SizedBox.shrink();
+
+              return PopupMenuButton<_PlayerAction>(
+                icon: const Icon(Icons.more_vert_rounded),
+                onSelected: (action) {
+                  switch (action) {
+                    case _PlayerAction.addToPlaylist:
+                      _AddToPlaylistSheet.show(context, now.stream!);
+                    case _PlayerAction.share:
+                      Share.share(
+                        '🎵 ${now.title} — ${now.artist}\n${now.stream!.youtubeUrl}',
+                        subject: now.title,
+                      );
+                    case _PlayerAction.sleepTimer:
+                      _SleepTimerSheet.show(context);
+                    case _PlayerAction.queue:
+                      QueueScreen.show(context);
+                  }
+                },
+                itemBuilder: (_) => [
+                  // Add to playlist — streams only
+                  if (now.isStream)
+                    const PopupMenuItem(
+                      value: _PlayerAction.addToPlaylist,
+                      child: ListTile(
+                        leading: Icon(Icons.playlist_add_rounded),
+                        title: Text('Add to playlist'),
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                      ),
+                    ),
+                  // Share — streams only (local uses file share in body)
+                  if (now.isStream)
+                    const PopupMenuItem(
+                      value: _PlayerAction.share,
+                      child: ListTile(
+                        leading: Icon(Icons.share_outlined),
+                        title: Text('Share'),
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                      ),
+                    ),
+                  // Sleep timer — always
+                  PopupMenuItem(
+                    value: _PlayerAction.sleepTimer,
+                    child: ListTile(
+                      leading: Icon(
+                        Icons.bedtime_outlined,
+                        color: player.sleepTimerActive ? cs.primary : null,
+                      ),
+                      title: Text(
+                        player.sleepTimerActive
+                            ? 'Sleep timer (on)'
+                            : 'Sleep timer',
+                      ),
+                      contentPadding: EdgeInsets.zero,
+                      dense: true,
+                    ),
+                  ),
+                  // Queue — local tracks only
+                  if (!now.isStream && player.queue.isNotEmpty)
+                    const PopupMenuItem(
+                      value: _PlayerAction.queue,
+                      child: ListTile(
+                        leading: Icon(Icons.queue_music_outlined),
+                        title: Text('Queue'),
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                      ),
+                    ),
+                ],
+              );
+            },
           ),
         ],
       ),
@@ -396,6 +425,12 @@ class PlayerScreen extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Overflow menu actions
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum _PlayerAction { addToPlaylist, share, sleepTimer, queue }
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Equalizer bottom sheet
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -406,6 +441,13 @@ class _EqSheet extends StatelessWidget {
     showModalBottomSheet(
       context: context,
       backgroundColor: const Color(0xFF1A1A2E),
+      // isScrollControlled lets the sheet grow to its natural height
+      // instead of being capped at ~50% of the screen (which clips the
+      // bottom on smaller devices).
+      isScrollControlled: true,
+      // useSafeArea adds bottom padding automatically so the sheet never
+      // disappears behind the navigation bar or home indicator.
+      useSafeArea: true,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (_) => ChangeNotifierProvider.value(
@@ -422,7 +464,10 @@ class _EqSheet extends StatelessWidget {
     final player = context.watch<PlayerProvider>();
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 20, 24, 32),
+      // Bottom padding uses MediaQuery viewInsets so the sheet clears the
+      // system nav bar even on devices where useSafeArea isn't enough.
+      padding: EdgeInsets.fromLTRB(
+          24, 20, 24, 32 + MediaQuery.of(context).viewInsets.bottom),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,

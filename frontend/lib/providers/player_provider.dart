@@ -7,6 +7,7 @@ import 'package:flutter/scheduler.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../models/featured_playlist.dart';
 import '../models/search_result.dart';
 import '../models/track.dart';
 import 'recently_played_provider.dart';
@@ -116,6 +117,11 @@ class PlayerProvider extends ChangeNotifier {
   List<SearchResult> _streamPlaylist  = [];
   int                _streamIndex     = 0;
   String             _streamServerUrl = '';
+
+  /// The FeaturedPlaylist this stream session originated from, if any.
+  /// Used by MiniPlayer to show a "Go to playlist" chip.
+  FeaturedPlaylist? _sourceFeaturedPlaylist;
+  FeaturedPlaylist? get sourceFeaturedPlaylist => _sourceFeaturedPlaylist;
 
   // Guard: prevents _onTrackComplete re-entry during playlist advance
   bool _advancing = false;
@@ -248,11 +254,21 @@ class PlayerProvider extends ChangeNotifier {
     notifyListeners();
     if (_equalizer == null) return;
     try {
+      // Must explicitly enable — AndroidEqualizer starts disabled by default.
+      await _equalizer!.setEnabled(true);
+
       final params = await _equalizer!.parameters;
       final bands  = params.bands;
       final gains  = _presetGains[preset]!;
       for (var i = 0; i < bands.length && i < gains.length; i++) {
-        await bands[i].setGain(gains[i]);
+        final band = bands[i];
+        // Clamp to this device's actual supported dB range.
+        // Hardcoded values may exceed the device's range and get silently
+        // zeroed — reading min/max first guarantees the call succeeds.
+        final min    = band.minDecibels;
+        final max    = band.maxDecibels;
+        final clamped = gains[i].clamp(min, max);
+        await band.setGain(clamped);
       }
     } catch (e) {
       debugPrint('EQ setPreset error: $e');
@@ -262,6 +278,7 @@ class PlayerProvider extends ChangeNotifier {
   // ── Local playback ────────────────────────────────────────────────────────
 
   Future<void> playTrack(Track track) async {
+    _sourceFeaturedPlaylist = null;
     _queue      = [track];
     _queueIndex = 0;
     _rebuildShuffleOrder();
@@ -270,6 +287,7 @@ class PlayerProvider extends ChangeNotifier {
 
   Future<void> playAll(List<Track> tracks, {int startIndex = 0}) async {
     if (tracks.isEmpty) return;
+    _sourceFeaturedPlaylist = null;
     _queue      = List.from(tracks);
     _queueIndex = startIndex.clamp(0, tracks.length - 1);
     _rebuildShuffleOrder(startAt: startIndex);
@@ -307,17 +325,20 @@ class PlayerProvider extends ChangeNotifier {
     required List<SearchResult> playlist,
     required int index,
     required String serverUrl,
+    FeaturedPlaylist? featuredPlaylist,
   }) async {
     // Set context BEFORE playStream so it survives the clearQueue reset
     // playStream(clearQueue:false) won't wipe _streamPlaylist
-    _streamPlaylist  = List.from(playlist);
-    _streamIndex     = index;
-    _streamServerUrl = serverUrl;
+    _streamPlaylist          = List.from(playlist);
+    _streamIndex             = index;
+    _streamServerUrl         = serverUrl;
+    _sourceFeaturedPlaylist  = featuredPlaylist;
     await playStream(st, clearQueue: false);
     // Re-set after in case playStream overwrote anything
-    _streamPlaylist  = List.from(playlist);
-    _streamIndex     = index;
-    _streamServerUrl = serverUrl;
+    _streamPlaylist          = List.from(playlist);
+    _streamIndex             = index;
+    _streamServerUrl         = serverUrl;
+    _sourceFeaturedPlaylist  = featuredPlaylist;
     notifyListeners();
   }
 
@@ -361,9 +382,10 @@ class PlayerProvider extends ChangeNotifier {
     _queue = [];
     if (clearQueue) {
       _streamQueue.clear();
-      _streamPlaylist  = [];
-      _streamIndex     = 0;
-      _streamServerUrl = '';
+      _streamPlaylist         = [];
+      _streamIndex            = 0;
+      _streamServerUrl        = '';
+      _sourceFeaturedPlaylist = null;
     }
     _loading = true;
     _current = NowPlaying.stream(st);
@@ -585,6 +607,31 @@ class PlayerProvider extends ChangeNotifier {
     _sleepTimer?.cancel();
     _sleepTimer  = null;
     _sleepEndsAt = null;
+    notifyListeners();
+  }
+
+  // ── Dismiss ───────────────────────────────────────────────────────────────
+
+  /// Stops playback and clears all state so the MiniPlayer disappears.
+  /// Called by the swipe-to-dismiss gesture on the MiniPlayer.
+  Future<void> stopAndDismiss() async {
+    _suppressCompletion = true;
+    _sleepTimer?.cancel();
+    _sleepTimer          = null;
+    _sleepEndsAt         = null;
+    _sessionSaveTimer?.cancel();
+    await _player.stop();
+    _current             = null;
+    _queue               = [];
+    _shuffleOrder        = [];
+    _queueIndex          = 0;
+    _streamQueue.clear();
+    _streamPlaylist      = [];
+    _streamIndex         = 0;
+    _streamServerUrl     = '';
+    _sourceFeaturedPlaylist = null;
+    _loading             = false;
+    _suppressCompletion  = false;
     notifyListeners();
   }
 

@@ -9,6 +9,7 @@ import '../providers/player_provider.dart';
 import '../providers/playlist_provider.dart';
 import '../screens/player_screen.dart';
 import '../screens/playlist_detail_screen.dart';
+import '../screens/settings_screen.dart';
 import '../widgets/cover_art.dart';
 import '../widgets/mini_player.dart';
 
@@ -24,14 +25,132 @@ class _LibraryScreenState extends State<LibraryScreen>
   @override
   bool get wantKeepAlive => true;
 
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<LibraryProvider>().refresh();
+  // ── Multi-select state ────────────────────────────────────────────────────
+  final Set<String> _selected = {}; // file paths
+  bool get _selecting => _selected.isNotEmpty;
+
+  void _toggleSelect(String filePath) {
+    setState(() {
+      if (_selected.contains(filePath)) {
+        _selected.remove(filePath);
+      } else {
+        _selected.add(filePath);
+      }
     });
   }
 
+  void _clearSelection() => setState(() => _selected.clear());
+
+  void _selectAll(List<Track> tracks) {
+    setState(() => _selected
+      ..clear()
+      ..addAll(tracks.map((t) => t.filePath)));
+  }
+
+  // ── Toolbar actions ───────────────────────────────────────────────────────
+
+  Future<void> _playSelected(
+      BuildContext context, List<Track> allTracks) async {
+    final toPlay = allTracks
+        .where((t) => _selected.contains(t.filePath))
+        .toList();
+    if (toPlay.isEmpty) return;
+    final player = context.read<PlayerProvider>();
+    await player.playAll(toPlay, startIndex: 0);
+    _clearSelection();
+    if (context.mounted) PlayerScreen.show(context);
+  }
+
+  Future<void> _deleteSelected(
+      BuildContext context, LibraryProvider lib) async {
+    final count = _selected.length;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A2E),
+        title: const Text('Delete tracks?'),
+        content: Text(
+            'This will permanently delete $count track${count == 1 ? '' : 's'}.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Delete',
+                  style: TextStyle(color: Colors.red))),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+    final paths = Set<String>.from(_selected);
+    _clearSelection();
+    for (final t in lib.tracks.where((t) => paths.contains(t.filePath))) {
+      await lib.deleteTrack(t);
+    }
+  }
+
+  Future<void> _addSelectedToPlaylist(
+      BuildContext context, List<Track> allTracks) async {
+    final pp = context.read<PlaylistProvider>();
+    final playlists = pp.playlists;
+
+    if (playlists.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Create a playlist first')),
+      );
+      return;
+    }
+
+    final chosen = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: const Color(0xFF1A1A2E),
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+      builder: (_) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Text('Add ${_selected.length} track${_selected.length == 1 ? '' : 's'} to…',
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600)),
+          ),
+          ...playlists.map((pl) => ListTile(
+                leading: const Icon(Icons.queue_music_outlined,
+                    color: Color(0xFF6C63FF)),
+                title: Text(pl.name,
+                    style: const TextStyle(color: Colors.white)),
+                subtitle: Text('${pl.items.length} items',
+                    style: const TextStyle(color: Color(0xFF9090B0))),
+                onTap: () => Navigator.pop(context, pl.id),
+              )),
+          const SizedBox(height: 16),
+        ],
+      ),
+    );
+
+    if (chosen == null) return;
+
+    final toAdd = allTracks
+        .where((t) => _selected.contains(t.filePath))
+        .toList();
+    for (final t in toAdd) {
+      await pp.addTrack(chosen, t);
+    }
+
+    _clearSelection();
+
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Added ${toAdd.length} track${toAdd.length == 1 ? '' : 's'} to playlist')),
+      );
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     super.build(context);
@@ -42,73 +161,97 @@ class _LibraryScreenState extends State<LibraryScreen>
       child: Consumer<LibraryProvider>(
         builder: (ctx, lib, _) {
           final tracks = lib.tracks;
+
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // ── Header ──────────────────────────────────────────────
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-                child: Row(
-                  children: [
-                    Text('Library', style: tt.headlineMedium),
-                    const Spacer(),
-                    IconButton(
-                      onPressed: lib.refresh,
-                      icon: lib.loading
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.refresh_outlined),
-                    ),
-                    PopupMenuButton<SortOrder>(
-                      icon: const Icon(Icons.sort_outlined),
-                      onSelected: lib.setSortOrder,
-                      itemBuilder: (_) => [
-                        _sortItem(SortOrder.dateAdded, 'Date Added',
-                            lib.sortOrder),
-                        _sortItem(SortOrder.title, 'Title', lib.sortOrder),
-                        _sortItem(SortOrder.artist, 'Artist', lib.sortOrder),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
 
-              // ── Search ──────────────────────────────────────────────
-              Padding(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                child: TextField(
-                  onChanged: lib.setSearch,
-                  decoration: InputDecoration(
-                    hintText: 'Search tracks…',
-                    prefixIcon:
-                        const Icon(Icons.search_outlined, size: 18),
-                    suffixIcon: lib.searchQuery.isNotEmpty
-                        ? IconButton(
-                            icon: const Icon(Icons.clear, size: 18),
-                            onPressed: () => lib.setSearch(''),
-                          )
-                        : null,
+              // ── Header ────────────────────────────────────────────────
+              _selecting
+                  ? _SelectionHeader(
+                      count: _selected.length,
+                      total: tracks.length,
+                      onClear: _clearSelection,
+                      onSelectAll: () => _selectAll(tracks),
+                      onPlay: () => _playSelected(context, tracks),
+                      onDelete: () => _deleteSelected(context, lib),
+                      onAddToPlaylist: () =>
+                          _addSelectedToPlaylist(context, tracks),
+                    )
+                  : Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                      child: Row(
+                        children: [
+                          Text('Library', style: tt.headlineMedium),
+                          const Spacer(),
+                          IconButton(
+                            onPressed: lib.refresh,
+                            icon: lib.loading
+                                ? const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2),
+                                  )
+                                : const Icon(Icons.refresh_outlined),
+                          ),
+                          PopupMenuButton<SortOrder>(
+                            icon: const Icon(Icons.sort_outlined),
+                            onSelected: lib.setSortOrder,
+                            itemBuilder: (_) => [
+                              _sortItem(SortOrder.dateAdded, 'Date Added',
+                                  lib.sortOrder),
+                              _sortItem(
+                                  SortOrder.title, 'Title', lib.sortOrder),
+                              _sortItem(
+                                  SortOrder.artist, 'Artist', lib.sortOrder),
+                            ],
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.settings_outlined),
+                            tooltip: 'Settings',
+                            onPressed: () => SettingsScreen.show(context),
+                          ),
+                        ],
+                      ),
+                    ),
+
+              // ── Search (hidden in select mode) ────────────────────────
+              if (!_selecting)
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 16, vertical: 10),
+                  child: TextField(
+                    onChanged: lib.setSearch,
+                    decoration: InputDecoration(
+                      hintText: 'Search tracks…',
+                      prefixIcon:
+                          const Icon(Icons.search_outlined, size: 18),
+                      suffixIcon: lib.searchQuery.isNotEmpty
+                          ? IconButton(
+                              icon: const Icon(Icons.clear, size: 18),
+                              onPressed: () => lib.setSearch(''),
+                            )
+                          : null,
+                    ),
                   ),
                 ),
-              ),
 
-              // ── Playlists row ────────────────────────────────────────
-              _PlaylistsRow(allTracks: tracks),
+              // ── Playlists row (hidden in select mode) ─────────────────
+              if (!_selecting) _PlaylistsRow(allTracks: tracks),
 
-              // ── Track count ──────────────────────────────────────────
+              // ── Track count ───────────────────────────────────────────
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
                 child: Text(
-                  '${tracks.length} track${tracks.length == 1 ? '' : 's'}',
+                  _selecting
+                      ? '${_selected.length} selected'
+                      : '${tracks.length} track${tracks.length == 1 ? '' : 's'}',
                   style: tt.labelSmall,
                 ),
               ),
 
-              // ── Track list ───────────────────────────────────────────
+              // ── Track list ────────────────────────────────────────────
               Expanded(
                 child: tracks.isEmpty
                     ? _emptyState(lib.loading, tt, cs)
@@ -120,11 +263,19 @@ class _LibraryScreenState extends State<LibraryScreen>
                           allTracks: tracks,
                           index: i,
                           onDelete: () => lib.deleteTrack(tracks[i]),
+                          // Multi-select
+                          selecting: _selecting,
+                          selected:
+                              _selected.contains(tracks[i].filePath),
+                          onLongPress: () =>
+                              _toggleSelect(tracks[i].filePath),
+                          onSelectTap: () =>
+                              _toggleSelect(tracks[i].filePath),
                         ),
                       ),
               ),
 
-              // ── Mini player ──────────────────────────────────────────
+              // ── Mini player ───────────────────────────────────────────
               const MiniPlayer(),
             ],
           );
@@ -157,6 +308,83 @@ class _LibraryScreenState extends State<LibraryScreen>
           Text('No tracks yet', style: tt.bodyMedium),
           const SizedBox(height: 4),
           Text('Download something first', style: tt.labelSmall),
+        ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Selection-mode header bar
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _SelectionHeader extends StatelessWidget {
+  final int count;
+  final int total;
+  final VoidCallback onClear;
+  final VoidCallback onSelectAll;
+  final VoidCallback onPlay;
+  final VoidCallback onDelete;
+  final VoidCallback onAddToPlaylist;
+
+  const _SelectionHeader({
+    required this.count,
+    required this.total,
+    required this.onClear,
+    required this.onSelectAll,
+    required this.onPlay,
+    required this.onDelete,
+    required this.onAddToPlaylist,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final tt = Theme.of(context).textTheme;
+
+    return Container(
+      color: cs.primary.withOpacity(0.08),
+      padding: const EdgeInsets.fromLTRB(4, 8, 4, 8),
+      child: Row(
+        children: [
+          IconButton(
+            icon: const Icon(Icons.close_rounded),
+            onPressed: onClear,
+            tooltip: 'Cancel selection',
+          ),
+          Text(
+            '$count selected',
+            style: tt.titleMedium?.copyWith(color: cs.primary),
+          ),
+          const Spacer(),
+          // Select all
+          TextButton(
+            onPressed: onSelectAll,
+            child: Text(
+              'All',
+              style: TextStyle(color: cs.primary, fontSize: 13),
+            ),
+          ),
+          // Play selected
+          IconButton(
+            icon: Icon(Icons.play_arrow_rounded, color: cs.primary),
+            tooltip: 'Play selected',
+            onPressed: count > 0 ? onPlay : null,
+          ),
+          // Add to playlist
+          IconButton(
+            icon: Icon(Icons.playlist_add_rounded,
+                color: cs.onSurface.withOpacity(0.7)),
+            tooltip: 'Add to playlist',
+            onPressed: count > 0 ? onAddToPlaylist : null,
+          ),
+          // Delete
+          IconButton(
+            icon: Icon(Icons.delete_outline_rounded,
+                color: Colors.red.shade400),
+            tooltip: 'Delete selected',
+            onPressed: count > 0 ? onDelete : null,
+          ),
         ],
       ),
     );
@@ -216,15 +444,16 @@ class _PlaylistsRow extends StatelessWidget {
                   separatorBuilder: (_, __) => const SizedBox(width: 10),
                   itemBuilder: (ctx, i) {
                     final pl = playlists[i];
-                    final firstItem = pl.items.isNotEmpty ? pl.items.first : null;
-                    // Prefer hqdefault.jpg built from youtubeUrl — more reliable
-                    // than the thumbnail stored at stream time (may be expired/low-res).
+                    final firstItem =
+                        pl.items.isNotEmpty ? pl.items.first : null;
                     final thumbUrl = firstItem?.isStream == true
-                        ? (_ytThumb(firstItem!.youtubeUrl) ?? firstItem.thumbnailUrl)
+                        ? (_ytThumb(firstItem!.youtubeUrl) ??
+                            firstItem.thumbnailUrl)
                         : null;
                     final localThumb = firstItem?.isStream == false
                         ? allTracks
-                            .where((t) => t.filePath == firstItem!.filePath)
+                            .where((t) =>
+                                t.filePath == firstItem!.filePath)
                             .firstOrNull
                             ?.coverArt
                         : null;
@@ -233,47 +462,45 @@ class _PlaylistsRow extends StatelessWidget {
                       onTap: () => Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (_) => PlaylistDetailScreen(playlist: pl),
+                          builder: (_) =>
+                              PlaylistDetailScreen(playlist: pl),
                         ),
                       ),
                       child: Container(
                         width: 140,
                         decoration: BoxDecoration(
-                          color: const Color(0xFF16213E),
-                          borderRadius: BorderRadius.circular(12),
+                          color: cs.surface,
+                          borderRadius: BorderRadius.circular(10),
                         ),
+                        clipBehavior: Clip.antiAlias,
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            // ── Thumbnail ──────────────────────────────
-                            ClipRRect(
-                              borderRadius: const BorderRadius.vertical(
-                                  top: Radius.circular(12)),
-                              child: SizedBox(
-                                width: 140,
-                                height: 56,
-                                child: thumbUrl != null
-                                    ? CachedNetworkImage(
-                                        imageUrl: thumbUrl,
-                                        fit: BoxFit.cover,
-                                        placeholder: (_, __) => Container(
-                                            color: const Color(0xFF1A1A2E)),
-                                        errorWidget: (_, __, ___) =>
-                                            _thumbFallback(cs),
-                                      )
-                                    : localThumb != null
-                                        ? Image.memory(localThumb,
-                                            fit: BoxFit.cover,
-                                            width: 140,
-                                            height: 56)
-                                        : _thumbFallback(cs),
-                              ),
+                            SizedBox(
+                              height: 56,
+                              width: 140,
+                              child: thumbUrl != null
+                                  ? CachedNetworkImage(
+                                      imageUrl: thumbUrl,
+                                      fit: BoxFit.cover,
+                                      width: 140,
+                                      height: 56,
+                                      errorWidget: (_, __, ___) =>
+                                          _thumbFallback(cs),
+                                    )
+                                  : localThumb != null
+                                      ? Image.memory(localThumb,
+                                          fit: BoxFit.cover,
+                                          width: 140,
+                                          height: 56)
+                                      : _thumbFallback(cs),
                             ),
-                            // ── Name + count ───────────────────────────
                             Padding(
-                              padding: const EdgeInsets.fromLTRB(8, 5, 8, 6),
+                              padding:
+                                  const EdgeInsets.fromLTRB(8, 5, 8, 6),
                               child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
+                                crossAxisAlignment:
+                                    CrossAxisAlignment.start,
                                 children: [
                                   Text(pl.name,
                                       style: tt.titleMedium
@@ -305,8 +532,6 @@ class _PlaylistsRow extends StatelessWidget {
             size: 22, color: cs.primary.withOpacity(0.5)),
       );
 
-  /// Builds a reliable YouTube hqdefault thumbnail URL from a watch URL.
-  /// Returns null if the URL is invalid or missing a video ID.
   String? _ytThumb(String? youtubeUrl) {
     if (youtubeUrl == null) return null;
     final id = Uri.tryParse(youtubeUrl)?.queryParameters['v'];
@@ -344,7 +569,7 @@ class _PlaylistsRow extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Track tile with slidable actions
+// Track tile — normal + select mode
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _TrackTile extends StatelessWidget {
@@ -353,11 +578,21 @@ class _TrackTile extends StatelessWidget {
   final int index;
   final VoidCallback onDelete;
 
+  // Multi-select
+  final bool selecting;
+  final bool selected;
+  final VoidCallback onLongPress;
+  final VoidCallback onSelectTap;
+
   const _TrackTile({
     required this.track,
     required this.allTracks,
     required this.index,
     required this.onDelete,
+    required this.selecting,
+    required this.selected,
+    required this.onLongPress,
+    required this.onSelectTap,
   });
 
   @override
@@ -366,6 +601,50 @@ class _TrackTile extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     final player = context.read<PlayerProvider>();
 
+    // In select mode — disable Slidable, show checkbox
+    if (selecting) {
+      return AnimatedContainer(
+        duration: const Duration(milliseconds: 120),
+        color: selected
+            ? cs.primary.withOpacity(0.1)
+            : Colors.transparent,
+        child: ListTile(
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+          leading: Stack(
+            alignment: Alignment.bottomRight,
+            children: [
+              CoverArt(coverArtBytes: track.coverArt, size: 48),
+              if (selected)
+                Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    color: cs.primary.withOpacity(0.6),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Icon(Icons.check_rounded,
+                      color: cs.onPrimary, size: 24),
+                ),
+            ],
+          ),
+          title: Text(track.title,
+              style: tt.titleMedium?.copyWith(
+                color: selected ? cs.primary : null,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis),
+          subtitle: Text('${track.artist} • ${_fmt(track.duration)}',
+              style: tt.bodyMedium,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis),
+          onTap: onSelectTap,
+          onLongPress: onSelectTap,
+        ),
+      );
+    }
+
+    // Normal mode — slidable
     return Slidable(
       key: ValueKey(track.filePath),
       endActionPane: ActionPane(
@@ -403,6 +682,7 @@ class _TrackTile extends StatelessWidget {
           await player.playAll(allTracks, startIndex: index);
           if (context.mounted) PlayerScreen.show(context);
         },
+        onLongPress: onLongPress, // enters select mode
       ),
     );
   }
@@ -458,7 +738,7 @@ class _TrackTile extends StatelessWidget {
       await pp.addTrack(chosen, track);
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Added to playlist')),
+          const SnackBar(content: Text('Added to playlist')),
         );
       }
     }
