@@ -186,9 +186,16 @@ class _FeaturedPlaylistScreenState extends State<FeaturedPlaylistScreen> {
 
   void _downloadAll() {
     if (_tracks.isEmpty) return;
+    final dl = context.read<DownloadProvider>();
+    final activeOrDoneTitles = dl.jobs
+        .where((j) => j.status == DownloadStatus.downloading ||
+                      j.status == DownloadStatus.done)
+        .map((j) => j.title)
+        .toSet();
+
     int enqueued = 0;
     for (final result in _tracks) {
-      if (_downloaded.contains(result.id)) continue;
+      if (activeOrDoneTitles.contains(result.title)) continue;
       _downloadTrack(result);
       enqueued++;
     }
@@ -210,12 +217,6 @@ class _FeaturedPlaylistScreenState extends State<FeaturedPlaylistScreen> {
           server.downloadUrl(result.url),
           title: result.title,
         );
-    setState(() => _downloaded.add(result.id));
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-          content: Text('Downloading: ${result.title}',
-              maxLines: 1, overflow: TextOverflow.ellipsis)),
-    );
   }
 
   /// Extracts video ID from a YouTube watch URL and returns hqdefault.jpg.
@@ -306,21 +307,22 @@ class _FeaturedPlaylistScreenState extends State<FeaturedPlaylistScreen> {
                               final result = _tracks[i];
                               return Consumer<DownloadProvider>(
                                 builder: (ctx, dl, _) {
-                                  // Find an active job matching this track title
+                                  // Find any job for this track by title
                                   DownloadJob? job;
                                   for (final j in dl.jobs) {
-                                    if (j.status == DownloadStatus.downloading &&
-                                        j.title == result.title) {
+                                    if (j.title == result.title) {
                                       job = j;
                                       break;
                                     }
                                   }
+                                  final isDone = job?.status == DownloadStatus.done;
+                                  final isDownloading = job?.status == DownloadStatus.downloading;
                                   return _TrackRow(
                                     index:            i + 1,
                                     result:           result,
                                     isStreaming:      _streaming.contains(result.id),
-                                    isDownloaded:     _downloaded.contains(result.id),
-                                    downloadProgress: job?.progress,
+                                    isDownloaded:     isDone || _downloaded.contains(result.id),
+                                    downloadProgress: isDownloading ? job!.progress : null,
                                     onStream:         () => _streamTrack(result),
                                     onDownload:       () => _downloadTrack(result),
                                     onOptions:        () => TrackOptionsSheet.show(ctx, result),
