@@ -585,7 +585,7 @@ class PlayerProvider extends ChangeNotifier {
       ..remove(startAt)
       ..shuffle(_rng);
     _shuffleOrder = [startAt, ...indices];
-    _queueIndex   = 0;
+    if (_shuffle) _queueIndex = 0;
   }
 
   void _onTrackComplete() {
