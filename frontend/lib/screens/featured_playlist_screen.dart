@@ -301,15 +301,32 @@ class _FeaturedPlaylistScreenState extends State<FeaturedPlaylistScreen> {
                         : ListView.builder(
                             padding: const EdgeInsets.only(bottom: 100),
                             itemCount: _tracks.length,
-                            itemBuilder: (ctx, i) => _TrackRow(
-                              index:        i + 1,
-                              result:       _tracks[i],
-                              isStreaming:  _streaming.contains(_tracks[i].id),
-                              isDownloaded: _downloaded.contains(_tracks[i].id),
-                              onStream:     () => _streamTrack(_tracks[i]),
-                              onDownload:   () => _downloadTrack(_tracks[i]),
-                              onOptions:    () => TrackOptionsSheet.show(ctx, _tracks[i]),
-                            ),
+                            itemBuilder: (ctx, i) {
+                              final result = _tracks[i];
+                              return Consumer<DownloadProvider>(
+                                builder: (ctx, dl, _) {
+                                  // Find an active job matching this track title
+                                  DownloadJob? job;
+                                  for (final j in dl.jobs) {
+                                    if (j.status == DownloadStatus.downloading &&
+                                        j.title == result.title) {
+                                      job = j;
+                                      break;
+                                    }
+                                  }
+                                  return _TrackRow(
+                                    index:            i + 1,
+                                    result:           result,
+                                    isStreaming:      _streaming.contains(result.id),
+                                    isDownloaded:     _downloaded.contains(result.id),
+                                    downloadProgress: job?.progress,
+                                    onStream:         () => _streamTrack(result),
+                                    onDownload:       () => _downloadTrack(result),
+                                    onOptions:        () => TrackOptionsSheet.show(ctx, result),
+                                  );
+                                },
+                              );
+                            },
                           ),
           ),
 
@@ -486,6 +503,7 @@ class _TrackRow extends StatelessWidget {
   final SearchResult result;
   final bool isStreaming;
   final bool isDownloaded;
+  final double? downloadProgress; // null = idle, 0.0–1.0 = in progress
   final VoidCallback onStream;
   final VoidCallback onDownload;
   final VoidCallback onOptions;
@@ -495,6 +513,7 @@ class _TrackRow extends StatelessWidget {
     required this.result,
     required this.isStreaming,
     required this.isDownloaded,
+    this.downloadProgress,
     required this.onStream,
     required this.onDownload,
     required this.onOptions,
@@ -568,18 +587,46 @@ class _TrackRow extends StatelessWidget {
                   tooltip: 'Stream',
                   onPressed: onStream,
                 ),
-          isDownloaded
-              ? const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 6),
-                  child:
-                      Icon(Icons.check_circle, color: Colors.green, size: 22),
-                )
-              : IconButton(
-                  icon: Icon(Icons.download_outlined,
-                      color: cs.primary, size: 22),
-                  tooltip: 'Download',
-                  onPressed: onDownload,
+          // Download button — three states: idle / downloading / done
+          if (isDownloaded)
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 6),
+              child: Icon(Icons.check_circle, color: Colors.green, size: 22),
+            )
+          else if (downloadProgress != null)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6),
+              child: SizedBox(
+                width: 28,
+                height: 28,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    CircularProgressIndicator(
+                      value: downloadProgress,
+                      strokeWidth: 2.5,
+                      backgroundColor: cs.onSurface.withOpacity(0.15),
+                      valueColor: AlwaysStoppedAnimation(cs.primary),
+                    ),
+                    Text(
+                      '${((downloadProgress ?? 0) * 100).toInt()}%',
+                      style: TextStyle(
+                        color: cs.primary,
+                        fontSize: 7,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
                 ),
+              ),
+            )
+          else
+            IconButton(
+              icon: Icon(Icons.download_outlined,
+                  color: cs.primary, size: 22),
+              tooltip: 'Download',
+              onPressed: onDownload,
+            ),
           IconButton(
             icon: Icon(Icons.more_vert_rounded,
                 color: cs.onSurface.withOpacity(0.5), size: 20),
