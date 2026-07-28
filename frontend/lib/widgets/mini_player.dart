@@ -1,5 +1,6 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:provider/provider.dart';
 
@@ -114,6 +115,7 @@ class _MiniPlayerState extends State<MiniPlayer>
             final fling = velocity.abs() > 600;
             final far   = _dragOffset.abs() > dismissThreshold;
             if (fling || far) {
+              HapticFeedback.mediumImpact();
               _dismiss(context, toRight: _dragOffset > 0 || velocity > 0);
             } else {
               _snapBack();
@@ -200,15 +202,6 @@ class _MiniPlayerState extends State<MiniPlayer>
                                 padding: const EdgeInsets.only(right: 4),
                                 child: _SleepIndicator(
                                     remaining: player.sleepRemaining),
-                              ),
-
-                            // Previous
-                            if (player.hasPrevious)
-                              IconButton(
-                                iconSize: 24,
-                                icon: Icon(Icons.skip_previous_rounded,
-                                    color: cs.onSurface),
-                                onPressed: player.skipPrevious,
                               ),
 
                             // Play/pause

@@ -4,17 +4,20 @@ import 'package:provider/provider.dart';
 import '../providers/player_provider.dart';
 import '../widgets/cover_art.dart';
 
-/// Bottom sheet showing the current playback queue.
-/// Call [QueueScreen.show] from anywhere that has a BuildContext.
 class QueueScreen extends StatelessWidget {
   const QueueScreen({super.key});
 
   static Future<void> show(BuildContext context) {
-    return showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => const QueueScreen(),
+    return Navigator.of(context).push(
+      PageRouteBuilder(
+        pageBuilder: (_, __, ___) => const QueueScreen(),
+        transitionsBuilder: (_, anim, __, child) => SlideTransition(
+          position: Tween(begin: const Offset(1, 0), end: Offset.zero)
+              .animate(
+                  CurvedAnimation(parent: anim, curve: Curves.easeOutCubic)),
+          child: child,
+        ),
+      ),
     );
   }
 
@@ -23,139 +26,179 @@ class QueueScreen extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     final tt = Theme.of(context).textTheme;
 
-    return Consumer<PlayerProvider>(
-      builder: (ctx, player, _) {
-        final queue   = player.queue;
-        final current = player.queueIndex;
-
-        // If streaming or queue is empty, show a simple message
-        if (player.current?.isStream == true || queue.isEmpty) {
-          return _sheet(
-            context,
-            child: Center(
-              child: Padding(
-                padding: const EdgeInsets.all(32),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.queue_music_outlined,
-                        size: 48, color: cs.onSurface.withOpacity(0.2)),
-                    const SizedBox(height: 12),
-                    Text(
-                      player.current?.isStream == true
-                          ? 'Streaming — no queue'
-                          : 'Queue is empty',
-                      style: tt.bodyMedium,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          );
-        }
-
-        return _sheet(
-          context,
-          child: Column(
-            children: [
-              // Handle + title
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                child: Row(
-                  children: [
-                    Text('Up Next', style: tt.titleMedium),
-                    const Spacer(),
-                    Text('${queue.length} tracks', style: tt.labelSmall),
-                  ],
-                ),
-              ),
-              const Divider(height: 1),
-
-              // Track list
-              Expanded(
-                child: ListView.builder(
-                  padding: const EdgeInsets.only(bottom: 32),
-                  itemCount: queue.length,
-                  itemBuilder: (ctx, i) {
-                    final track   = queue[i];
-                    final isCurrent = i == current;
-
-                    return ListTile(
-                      contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 16, vertical: 4),
-                      leading: Stack(
-                        children: [
-                          CoverArt(coverArtBytes: track.coverArt, size: 44),
-                          if (isCurrent)
-                            Positioned.fill(
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  color: Colors.black54,
-                                  borderRadius: BorderRadius.circular(6),
-                                ),
-                                child: const Icon(
-                                  Icons.equalizer_rounded,
-                                  color: Colors.white,
-                                  size: 20,
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                      title: Text(
-                        track.title,
-                        style: tt.titleMedium?.copyWith(
-                          fontSize: 13,
-                          color: isCurrent ? cs.primary : null,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      subtitle: Text(
-                        track.artist,
-                        style: tt.bodyMedium?.copyWith(fontSize: 11),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      trailing: isCurrent
-                          ? Icon(Icons.volume_up_rounded,
-                              color: cs.primary, size: 18)
-                          : Text(_fmt(track.duration),
-                              style: tt.labelSmall),
-                      onTap: () {
-                        player.playQueueIndex(i);
-                        Navigator.pop(context);
-                      },
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _sheet(BuildContext context, {required Widget child}) {
-    return DraggableScrollableSheet(
-      initialChildSize: 0.6,
-      minChildSize: 0.4,
-      maxChildSize: 0.92,
-      expand: false,
-      builder: (_, scrollCtrl) => Container(
-        decoration: const BoxDecoration(
-          color: Color(0xFF1A1A2E),
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+    return Scaffold(
+      backgroundColor: const Color(0xFF0D0D1A),
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 30),
+          onPressed: () => Navigator.pop(context),
         ),
-        child: child,
+        title: Text('QUEUE', style: tt.labelSmall?.copyWith(letterSpacing: 2)),
+        centerTitle: true,
+      ),
+      body: Consumer<PlayerProvider>(
+        builder: (ctx, player, _) {
+          final queue        = player.queue;
+          final currentIndex = player.currentOrderedIndex;
+
+          if (queue.isEmpty) {
+            return Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.queue_music_outlined,
+                      size: 56, color: cs.onSurface.withOpacity(0.15)),
+                  const SizedBox(height: 16),
+                  Text('Queue is empty', style: tt.bodyMedium),
+                ],
+              ),
+            );
+          }
+
+          return ReorderableListView.builder(
+            padding: const EdgeInsets.only(bottom: 40),
+            // Show a subtle drag handle on each tile.
+            buildDefaultDragHandles: false,
+            onReorder: player.reorderQueue,
+            itemCount: queue.length,
+            itemBuilder: (ctx, i) {
+              final track      = queue[i];
+              final isCurrent  = i == currentIndex;
+              final isUpcoming = i > currentIndex;
+
+              return _QueueTile(
+                key: ValueKey('${track.filePath}_$i'),
+                track: track,
+                index: i,
+                isCurrent: isCurrent,
+                isUpcoming: isUpcoming,
+                currentIndex: currentIndex,
+                cs: cs,
+                tt: tt,
+                onTap: () => player.playQueueIndex(i),
+                onRemove: isUpcoming || i < currentIndex
+                    ? () => player.removeFromQueue(i)
+                    : null,
+              );
+            },
+          );
+        },
       ),
     );
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _QueueTile extends StatelessWidget {
+  final Track track;
+  final int index;
+  final bool isCurrent;
+  final bool isUpcoming;
+  final int currentIndex;
+  final ColorScheme cs;
+  final TextTheme tt;
+  final VoidCallback onTap;
+  final VoidCallback? onRemove;
+
+  const _QueueTile({
+    super.key,
+    required this.track,
+    required this.index,
+    required this.isCurrent,
+    required this.isUpcoming,
+    required this.currentIndex,
+    required this.cs,
+    required this.tt,
+    required this.onTap,
+    required this.onRemove,
+  });
 
   String _fmt(Duration d) {
     final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
     final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
     return '${d.inHours > 0 ? '${d.inHours}:' : ''}$m:$s';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      color: isCurrent
+          ? cs.primary.withOpacity(0.08)
+          : Colors.transparent,
+      child: ListTile(
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        leading: Stack(
+          alignment: Alignment.center,
+          children: [
+            Opacity(
+              opacity: isCurrent ? 1.0 : (isUpcoming ? 1.0 : 0.4),
+              child: CoverArt(coverArtBytes: track.coverArt, size: 44),
+            ),
+            // Equalizer / playing indicator on current track
+            if (isCurrent)
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.45),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Icon(Icons.equalizer_rounded,
+                    color: cs.primary, size: 20),
+              ),
+          ],
+        ),
+        title: Text(
+          track.title,
+          style: tt.titleMedium?.copyWith(
+            color: isCurrent
+                ? cs.primary
+                : isUpcoming
+                    ? cs.onSurface
+                    : cs.onSurface.withOpacity(0.4),
+            fontSize: 13,
+          ),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        subtitle: Text(
+          '${track.artist} • ${_fmt(track.duration)}',
+          style: tt.bodyMedium?.copyWith(
+            color: isCurrent
+                ? cs.primary.withOpacity(0.7)
+                : cs.onSurface.withOpacity(isUpcoming ? 0.5 : 0.3),
+            fontSize: 11,
+          ),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Remove button — not shown for current track
+            if (onRemove != null)
+              IconButton(
+                icon: Icon(Icons.remove_circle_outline_rounded,
+                    size: 20, color: cs.onSurface.withOpacity(0.3)),
+                onPressed: onRemove,
+                tooltip: 'Remove from queue',
+              ),
+            // Drag handle — only for upcoming tracks (can't reorder past)
+            if (isUpcoming)
+              ReorderableDragStartListener(
+                index: index,
+                child: Icon(Icons.drag_handle_rounded,
+                    color: cs.onSurface.withOpacity(0.3)),
+              ),
+          ],
+        ),
+        onTap: onTap,
+      ),
+    );
   }
 }

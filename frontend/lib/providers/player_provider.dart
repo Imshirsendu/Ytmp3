@@ -306,6 +306,33 @@ class PlayerProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Reorders the local queue. [oldIndex] and [newIndex] match
+  /// ReorderableListView's onReorder callback conventions.
+  void reorderQueue(int oldIndex, int newIndex) {
+    if (_shuffle) return; // reorder not supported in shuffle mode
+    if (oldIndex < newIndex) newIndex--;
+    final track = _queue.removeAt(oldIndex);
+    _queue.insert(newIndex, track);
+    // Keep _queueIndex pointing at the same track after the move.
+    if (oldIndex == _queueIndex) {
+      _queueIndex = newIndex;
+    } else if (oldIndex < _queueIndex && newIndex >= _queueIndex) {
+      _queueIndex--;
+    } else if (oldIndex > _queueIndex && newIndex <= _queueIndex) {
+      _queueIndex++;
+    }
+    notifyListeners();
+  }
+
+  /// Removes a track from the local queue by index.
+  void removeFromQueue(int index) {
+    if (index < 0 || index >= _queue.length) return;
+    if (index == _queueIndex) return; // don't remove currently playing track
+    _queue.removeAt(index);
+    if (index < _queueIndex) _queueIndex--;
+    notifyListeners();
+  }
+
   /// Inserts a stream track to play immediately after the current stream.
   void playNextStream(StreamTrack st) {
     _streamQueue.insert(0, st);
