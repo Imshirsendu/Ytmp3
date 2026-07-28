@@ -102,69 +102,110 @@ class _MiniPlayerState extends State<MiniPlayer>
             ),
             child: SafeArea(
               top: false,
-              child: SizedBox(
-                height: 64,
-                child: Row(
-                  children: [
-                    const SizedBox(width: 12),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // ── Main controls row (always 64px) ───────────────────
+                  SizedBox(
+                    height: 64,
+                    child: Row(
+                      children: [
+                        const SizedBox(width: 12),
 
-                    // Cover art
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(6),
-                      child: SizedBox(
-                        width: 44,
-                        height: 44,
-                        child: now.isStream
-                            ? (now.stream!.thumbnailUrl != null
-                                ? CachedNetworkImage(
-                                    imageUrl: now.stream!.thumbnailUrl!,
-                                    fit: BoxFit.cover,
-                                    errorWidget: (_, __, ___) => _fallback(cs),
-                                  )
-                                : _fallback(cs))
-                            : CoverArt(
-                                coverArtBytes: now.local!.coverArt, size: 44),
-                      ),
-                    ),
-
-                    const SizedBox(width: 12),
-
-                    // Title (marquee) + artist
-                    Expanded(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // Marquee only for the title — artist is shorter and
-                          // usually fits, so we leave it as ellipsis.
-                          _MarqueeText(
-                            text: now.title,
-                            style: tt.titleMedium?.copyWith(fontSize: 13) ??
-                                const TextStyle(fontSize: 13),
+                        // Cover art
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(6),
+                          child: SizedBox(
+                            width: 44,
+                            height: 44,
+                            child: now.isStream
+                                ? (now.stream!.thumbnailUrl != null
+                                    ? CachedNetworkImage(
+                                        imageUrl: now.stream!.thumbnailUrl!,
+                                        fit: BoxFit.cover,
+                                        errorWidget: (_, __, ___) =>
+                                            _fallback(cs),
+                                      )
+                                    : _fallback(cs))
+                                : CoverArt(
+                                    coverArtBytes: now.local!.coverArt,
+                                    size: 44),
                           ),
-                          const SizedBox(height: 1),
-                          Text(
-                            now.artist,
-                            style: tt.bodyMedium?.copyWith(fontSize: 11),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+                        ),
+
+                        const SizedBox(width: 12),
+
+                        // Title (marquee) + artist
+                        Expanded(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _MarqueeText(
+                                text: now.title,
+                                style:
+                                    tt.titleMedium?.copyWith(fontSize: 13) ??
+                                        const TextStyle(fontSize: 13),
+                              ),
+                              const SizedBox(height: 1),
+                              Text(
+                                now.artist,
+                                style: tt.bodyMedium?.copyWith(fontSize: 11),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
                           ),
-                        ],
-                      ),
+                        ),
+
+                        // Sleep timer indicator
+                        if (player.sleepTimerActive)
+                          Padding(
+                            padding: const EdgeInsets.only(right: 4),
+                            child: _SleepIndicator(
+                                remaining: player.sleepRemaining),
+                          ),
+
+                        // Play/pause
+                        StreamBuilder<PlayerState>(
+                          stream: player.playerStateStream,
+                          builder: (ctx, snap) {
+                            final isPlaying = snap.data?.playing ?? false;
+                            return IconButton(
+                              iconSize: 28,
+                              icon: Icon(
+                                isPlaying
+                                    ? Icons.pause_rounded
+                                    : Icons.play_arrow_rounded,
+                                color: cs.onSurface,
+                              ),
+                              onPressed: player.togglePlayPause,
+                            );
+                          },
+                        ),
+
+                        // Next
+                        if (player.hasNext)
+                          IconButton(
+                            iconSize: 24,
+                            icon: Icon(Icons.skip_next_rounded,
+                                color: cs.onSurface),
+                            onPressed: player.skipNext,
+                          ),
+
+                        const SizedBox(width: 4),
+                      ],
                     ),
+                  ),
 
-                    // Sleep timer indicator
-                    if (player.sleepTimerActive)
-                      Padding(
-                        padding: const EdgeInsets.only(right: 4),
-                        child:
-                            _SleepIndicator(remaining: player.sleepRemaining),
-                      ),
-
-                    // Go to Featured Playlist chip
-                    if (player.sourceFeaturedPlaylist != null)
-                      Padding(
-                        padding: const EdgeInsets.only(right: 4),
+                  // ── Playlist chip row — only shown when in a playlist ──
+                  // Sits below the controls so it never overlaps anything.
+                  if (player.sourceFeaturedPlaylist != null)
+                    Padding(
+                      padding:
+                          const EdgeInsets.only(left: 12, right: 12, bottom: 8),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
                         child: _PlaylistChip(
                           label: player.sourceFeaturedPlaylist!.title,
                           onTap: () => Navigator.of(context).push(
@@ -176,37 +217,8 @@ class _MiniPlayerState extends State<MiniPlayer>
                           ),
                         ),
                       ),
-
-                    // Play/pause
-                    StreamBuilder<PlayerState>(
-                      stream: player.playerStateStream,
-                      builder: (ctx, snap) {
-                        final isPlaying = snap.data?.playing ?? false;
-                        return IconButton(
-                          iconSize: 28,
-                          icon: Icon(
-                            isPlaying
-                                ? Icons.pause_rounded
-                                : Icons.play_arrow_rounded,
-                            color: cs.onSurface,
-                          ),
-                          onPressed: player.togglePlayPause,
-                        );
-                      },
                     ),
-
-                    // Next
-                    if (player.hasNext)
-                      IconButton(
-                        iconSize: 24,
-                        icon: Icon(Icons.skip_next_rounded,
-                            color: cs.onSurface),
-                        onPressed: player.skipNext,
-                      ),
-
-                    const SizedBox(width: 4),
-                  ],
-                ),
+                ],
               ),
             ),
           ),

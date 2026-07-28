@@ -173,10 +173,11 @@ class PlayerScreen extends StatelessWidget {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(now.title,
-                                style: tt.titleMedium?.copyWith(fontSize: 18),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis),
+                            _MarqueeText(
+                              text: now.title,
+                              style: tt.titleMedium?.copyWith(fontSize: 18) ??
+                                  const TextStyle(fontSize: 18),
+                            ),
                             const SizedBox(height: 4),
                             Row(
                               children: [
@@ -857,6 +858,117 @@ class _AddToPlaylistSheet extends StatelessWidget {
         SnackBar(content: Text('Added to $name')),
       );
     }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Marquee text — scrolls right-to-left when text overflows.
+// Identical logic to MiniPlayer's _MarqueeText; kept private to this file.
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _MarqueeText extends StatefulWidget {
+  final String text;
+  final TextStyle style;
+  const _MarqueeText({required this.text, required this.style});
+
+  @override
+  State<_MarqueeText> createState() => _MarqueeTextState();
+}
+
+class _MarqueeTextState extends State<_MarqueeText>
+    with SingleTickerProviderStateMixin {
+  late final ScrollController _scroll;
+  late final AnimationController _controller;
+
+  static const double _gap     = 64.0;  // wider gap for the full-screen player
+  static const double _pxPerSec = 35.0;
+  static const int    _pauseMs  = 1800;
+
+  bool _needsScroll = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _scroll     = ScrollController();
+    _controller = AnimationController(vsync: this);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _measure());
+  }
+
+  @override
+  void didUpdateWidget(_MarqueeText old) {
+    super.didUpdateWidget(old);
+    if (old.text != widget.text) {
+      _controller.stop();
+      if (_scroll.hasClients) _scroll.jumpTo(0);
+      setState(() => _needsScroll = false);
+      WidgetsBinding.instance.addPostFrameCallback((_) => _measure());
+    }
+  }
+
+  void _measure() {
+    if (!mounted || !_scroll.hasClients) return;
+    if (_scroll.position.maxScrollExtent > 0) {
+      setState(() => _needsScroll = true);
+      _startLoop();
+    }
+  }
+
+  void _startLoop() async {
+    if (!mounted) return;
+    await Future.delayed(const Duration(milliseconds: _pauseMs));
+    if (!mounted) return;
+    _runScroll();
+  }
+
+  void _runScroll() async {
+    while (mounted && _needsScroll && _scroll.hasClients) {
+      final maxScroll = _scroll.position.maxScrollExtent;
+      if (maxScroll <= 0) break;
+      final dur = Duration(
+          milliseconds: ((maxScroll + _gap) / _pxPerSec * 1000).round());
+      await _scroll.animateTo(maxScroll + _gap,
+          duration: dur, curve: Curves.linear);
+      if (!mounted) return;
+      await Future.delayed(const Duration(milliseconds: 600));
+      if (!mounted) return;
+      _scroll.jumpTo(0);
+      await Future.delayed(const Duration(milliseconds: _pauseMs));
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(builder: (context, constraints) {
+      return ClipRect(
+        child: SizedBox(
+          height: (widget.style.fontSize ?? 18) * 1.4,
+          child: _needsScroll
+              ? ListView(
+                  controller: _scroll,
+                  scrollDirection: Axis.horizontal,
+                  physics: const NeverScrollableScrollPhysics(),
+                  children: [
+                    Text(widget.text, style: widget.style),
+                    SizedBox(width: _gap),
+                    Text(widget.text, style: widget.style),
+                  ],
+                )
+              : SingleChildScrollView(
+                  controller: _scroll,
+                  scrollDirection: Axis.horizontal,
+                  physics: const NeverScrollableScrollPhysics(),
+                  child: Text(widget.text, style: widget.style),
+                ),
+        ),
+      );
+    });
   }
 }
 
