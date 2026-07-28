@@ -1,11 +1,13 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
 
 import '../models/search_result.dart';
 import '../models/track.dart';
 import '../providers/library_provider.dart';
+import '../providers/download_provider.dart';
 import '../providers/player_provider.dart';
 import '../providers/playlist_provider.dart';
 import '../providers/server_provider.dart';
@@ -290,7 +292,10 @@ class _ItemTile extends StatelessWidget {
     } else {
       title    = localTrack?.title ?? item.filePath?.split('/').last ?? 'Unknown';
       subtitle = localTrack?.artist ?? '';
-      leading  = CoverArt(coverArtBytes: localTrack?.coverArt, size: 48);
+      leading  = _DownloadAwareCover(
+        filePath: item.filePath ?? '',
+        coverArt: localTrack?.coverArt,
+      );
     }
 
     return ListTile(
@@ -338,4 +343,89 @@ class _ItemTile extends StatelessWidget {
         child: Icon(Icons.music_note_rounded,
             size: 20, color: cs.onSurface.withOpacity(0.3)),
       );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Reusable cover art with circular download progress overlay.
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _DownloadAwareCover extends StatelessWidget {
+  final String filePath;
+  final Uint8List? coverArt;
+  const _DownloadAwareCover({required this.filePath, required this.coverArt});
+
+  String _stem(String path) {
+    final name = path.split('/').last.split('\\').last;
+    return name.endsWith('.mp3') ? name.substring(0, name.length - 4) : name;
+  }
+
+  String _sanitise(String raw) {
+    final trimmed = raw.trim();
+    return trimmed
+        .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim()
+        .substring(0, trimmed.length.clamp(0, 100));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Consumer<DownloadProvider>(
+      builder: (ctx, dl, _) {
+        final stem = _stem(filePath);
+        DownloadJob? job;
+        for (final j in dl.jobs) {
+          if (j.status == DownloadStatus.downloading &&
+              _sanitise(j.title) == stem) {
+            job = j;
+            break;
+          }
+        }
+        return SizedBox(
+          width: 48,
+          height: 48,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              CoverArt(coverArtBytes: coverArt, size: 48),
+              if (job != null) ...[
+                Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.55),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                ),
+                SizedBox(
+                  width: 34,
+                  height: 34,
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      CircularProgressIndicator(
+                        value: job.progress,
+                        strokeWidth: 2.5,
+                        backgroundColor: cs.onSurface.withOpacity(0.2),
+                        valueColor: AlwaysStoppedAnimation(cs.primary),
+                      ),
+                      Text(
+                        '${(job.progress * 100).toInt()}%',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 8,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ),
+        );
+      },
+    );
+  }
 }
