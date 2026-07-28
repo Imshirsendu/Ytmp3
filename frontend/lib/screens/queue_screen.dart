@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../providers/player_provider.dart';
+import '../models/track.dart';
 import '../widgets/cover_art.dart';
 
 class QueueScreen extends StatelessWidget {
