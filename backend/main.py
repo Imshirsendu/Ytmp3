@@ -161,6 +161,72 @@ def _embed_metadata(mp3_path: Path, info: dict) -> None:
     log.info("ID3 tags written → %s", mp3_path.name)
 
 
+def _download_via_cf_worker(url: str, work_dir: Path) -> tuple[Path, dict] | None:
+    """
+    Try to get the stream URL from CF Worker (Cobalt), then download + convert to MP3.
+    Returns (mp3_path, info_dict) on success, None if CF Worker unavailable/fails.
+    """
+    cf_worker = os.getenv("CF_WORKER_URL", "").strip().rstrip("/")
+    if not cf_worker:
+        return None
+    try:
+        resp = httpx.get(
+            f"{cf_worker}/extract",
+            params={"url": url},
+            timeout=30,
+            follow_redirects=True,
+        )
+        if resp.status_code != 200:
+            log.warning("CF Worker download attempt HTTP %s", resp.status_code)
+            return None
+        data = resp.json()
+        stream_url = data.get("stream_url")
+        if not stream_url:
+            log.warning("CF Worker returned no stream_url for download")
+            return None
+
+        log.info("CF Worker stream URL obtained for download, fetching audio...")
+        title    = data.get("title") or "download"
+        artist   = data.get("artist") or "Unknown Artist"
+        ext      = data.get("ext") or "webm"
+        thumb    = data.get("thumbnail")
+
+        # Download the raw audio stream
+        raw_path = work_dir / f"raw.{ext}"
+        with httpx.stream("GET", stream_url, timeout=300, follow_redirects=True) as r:
+            r.raise_for_status()
+            with open(raw_path, "wb") as f:
+                for chunk in r.iter_bytes(chunk_size=65536):
+                    f.write(chunk)
+
+        # Convert to 320kbps MP3 via ffmpeg
+        safe_title = title.replace("/", "_").replace("\\", "_")[:80]
+        mp3_path = work_dir / f"{safe_title}.mp3"
+        ffmpeg_cmd = [
+            "ffmpeg", "-y", "-i", str(raw_path),
+            "-vn", "-ar", "44100", "-ac", "2", "-b:a", "320k",
+            str(mp3_path)
+        ]
+        result = subprocess.run(ffmpeg_cmd, capture_output=True, timeout=120)
+        raw_path.unlink(missing_ok=True)
+        if result.returncode != 0:
+            log.warning("ffmpeg convert failed: %s", result.stderr.decode()[:200])
+            return None
+
+        # Build a minimal info dict for metadata embedding
+        info = {
+            "title":    title,
+            "uploader": artist,
+            "album":    data.get("album") or "YouTube",
+            "thumbnail": thumb,
+        }
+        log.info("CF Worker download+convert OK → %s", mp3_path.name)
+        return mp3_path, info
+    except Exception as e:
+        log.warning("CF Worker download failed: %s", e)
+        return None
+
+
 def _download_audio(url: str, work_dir: Path) -> tuple[Path, dict]:
     out_tmpl = str(work_dir / "%(title)s.%(ext)s")
     with yt_dlp.YoutubeDL(_build_ydl_opts(out_tmpl)) as ydl:
@@ -474,10 +540,20 @@ async def download(url: str = Query(...)):
     try:
         log.info("Download request → %s", url)
         loop = asyncio.get_event_loop()
-        mp3_path, info = await asyncio.wait_for(
-            loop.run_in_executor(None, _download_audio, url, work_dir),
-            timeout=300,
+
+        # Try CF Worker (Cobalt) first — no cookies needed
+        cf_result = await asyncio.wait_for(
+            loop.run_in_executor(None, _download_via_cf_worker, url, work_dir),
+            timeout=120,
         )
+        if cf_result:
+            mp3_path, info = cf_result
+        else:
+            log.info("CF Worker unavailable, falling back to yt-dlp for download")
+            mp3_path, info = await asyncio.wait_for(
+                loop.run_in_executor(None, _download_audio, url, work_dir),
+                timeout=300,
+            )
         _embed_metadata(mp3_path, info)
         filename = mp3_path.name
         log.info("Serving → %s (%d bytes)", filename, mp3_path.stat().st_size)
