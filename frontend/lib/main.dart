@@ -9,6 +9,7 @@ import 'providers/playlist_provider.dart';
 import 'providers/recently_played_provider.dart';
 import 'providers/search_provider.dart';
 import 'providers/server_provider.dart';
+import 'providers/settings_provider.dart';
 import 'screens/main_shell.dart';
 
 Future<void> main() async {
@@ -23,6 +24,7 @@ Future<void> main() async {
     MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => ServerProvider()),
+        ChangeNotifierProvider(create: (_) => SettingsProvider()),
         ChangeNotifierProvider(create: (_) => DownloadProvider()),
         ChangeNotifierProvider(create: (_) => LibraryProvider()),
         ChangeNotifierProvider(create: (_) => SearchProvider()),

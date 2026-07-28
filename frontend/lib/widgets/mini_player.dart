@@ -20,22 +20,31 @@ class _MiniPlayerState extends State<MiniPlayer>
   late final AnimationController _slideController;
   late final Animation<Offset> _slideAnim;
 
+  // Horizontal drag offset in logical pixels.
   double _dragOffset = 0;
-  static const double _height = 64;
+
+  // True from the moment the user starts a horizontal drag until it ends.
+  // While true, onTap is suppressed so the full-screen player never opens
+  // as a side-effect of a dismiss swipe.
+  bool _isDragging = false;
+
+  // Set on first build; used for the dismiss threshold.
+  double _screenWidth = 400;
 
   @override
   void initState() {
     super.initState();
     _slideController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 220),
+      duration: const Duration(milliseconds: 200),
     );
+    // Placeholder — actual end offset is set per-swipe-direction in _dismiss.
     _slideAnim = Tween<Offset>(
       begin: Offset.zero,
-      end: const Offset(0, 1),
+      end: const Offset(1, 0),
     ).animate(CurvedAnimation(
       parent: _slideController,
-      curve: Curves.easeIn,
+      curve: Curves.easeOut,
     ));
   }
 
@@ -45,18 +54,45 @@ class _MiniPlayerState extends State<MiniPlayer>
     super.dispose();
   }
 
-  Future<void> _dismiss(BuildContext context) async {
-    await _slideController.forward();
+  Future<void> _dismiss(BuildContext context, {required bool toRight}) async {
+    // Snap off-screen in the direction the user swiped.
+    final targetX = toRight ? _screenWidth : -_screenWidth;
+    // Animate the remaining distance at a fixed speed (feels responsive).
+    final remaining = (targetX - _dragOffset).abs();
+    final ms = (remaining / _screenWidth * 180).clamp(80, 200).toInt();
+    await Future.microtask(() async {
+      if (!mounted) return;
+      // Drive offset to edge manually so it continues from where the finger left.
+      const steps = 12;
+      final step = (targetX - _dragOffset) / steps;
+      for (var i = 0; i < steps; i++) {
+        if (!mounted) return;
+        setState(() => _dragOffset += step);
+        await Future.delayed(Duration(milliseconds: ms ~/ steps));
+      }
+    });
     if (!mounted) return;
     await context.read<PlayerProvider>().stopAndDismiss();
     if (mounted) {
-      _slideController.reset();
-      setState(() => _dragOffset = 0);
+      setState(() {
+        _dragOffset = 0;
+        _isDragging = false;
+      });
     }
+  }
+
+  void _snapBack() {
+    setState(() {
+      _dragOffset = 0;
+      _isDragging = false;
+    });
   }
 
   @override
   Widget build(BuildContext context) {
+    _screenWidth = MediaQuery.of(context).size.width;
+    final dismissThreshold = _screenWidth * 0.35;
+
     return Consumer<PlayerProvider>(
       builder: (ctx, player, _) {
         final now = player.current;
@@ -66,163 +102,168 @@ class _MiniPlayerState extends State<MiniPlayer>
         final tt = Theme.of(context).textTheme;
 
         return GestureDetector(
-          onVerticalDragUpdate: (d) {
-            final newOffset =
-                (_dragOffset + d.delta.dy).clamp(0.0, _height * 1.5);
-            setState(() => _dragOffset = newOffset);
+          // ── Swipe left or right to dismiss ───────────────────────────
+          onHorizontalDragStart: (_) {
+            setState(() => _isDragging = true);
           },
-          onVerticalDragEnd: (d) {
-            final flingDown =
-                d.primaryVelocity != null && d.primaryVelocity! > 400;
-            final draggedFar = _dragOffset > _height * 0.45;
-            if (flingDown || draggedFar) {
-              _dismiss(context);
+          onHorizontalDragUpdate: (d) {
+            setState(() => _dragOffset += d.delta.dx);
+          },
+          onHorizontalDragEnd: (d) {
+            final velocity = d.primaryVelocity ?? 0;
+            final fling = velocity.abs() > 600;
+            final far   = _dragOffset.abs() > dismissThreshold;
+            if (fling || far) {
+              _dismiss(context, toRight: _dragOffset > 0 || velocity > 0);
             } else {
-              setState(() => _dragOffset = 0);
+              _snapBack();
             }
           },
-          onVerticalDragCancel: () => setState(() => _dragOffset = 0),
-          onTap: _dragOffset < 4 ? () => PlayerScreen.show(context) : null,
-          child: SlideTransition(
-            position: _slideAnim,
-            child: Transform.translate(
-              offset: Offset(0, _dragOffset),
-              child: Opacity(
-                opacity:
-                    (1 - (_dragOffset / (_height * 1.5))).clamp(0.0, 1.0),
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF16213E),
-                    border: Border(
-                      top: BorderSide(
-                          color: cs.onSurface.withOpacity(0.08), width: 1),
-                    ),
+          onHorizontalDragCancel: _snapBack,
+          // ── Tap opens full player — blocked while swiping ─────────────
+          onTap: _isDragging ? null : () => PlayerScreen.show(context),
+          child: Transform.translate(
+            offset: Offset(_dragOffset, 0),
+            child: Opacity(
+              // Fade proportionally as the player slides away.
+              opacity:
+                  (1 - (_dragOffset.abs() / _screenWidth)).clamp(0.0, 1.0),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: const Color(0xFF16213E),
+                  border: Border(
+                    top: BorderSide(
+                        color: cs.onSurface.withOpacity(0.08), width: 1),
                   ),
-                  child: SafeArea(
-                    top: false,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        // ── Main controls row (always 64px) ──────────────
-                        SizedBox(
-                          height: 64,
-                          child: Row(
-                            children: [
-                              const SizedBox(width: 12),
+                ),
+                child: SafeArea(
+                  top: false,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // ── Main controls row (always 64px) ────────────────
+                      SizedBox(
+                        height: 64,
+                        child: Row(
+                          children: [
+                            const SizedBox(width: 12),
 
-                              // Cover art
-                              ClipRRect(
-                                borderRadius: BorderRadius.circular(6),
-                                child: SizedBox(
-                                  width: 44,
-                                  height: 44,
-                                  child: now.isStream
-                                      ? (now.stream!.thumbnailUrl != null
-                                          ? CachedNetworkImage(
-                                              imageUrl:
-                                                  now.stream!.thumbnailUrl!,
-                                              fit: BoxFit.cover,
-                                              errorWidget: (_, __, ___) =>
-                                                  _fallback(cs),
-                                            )
-                                          : _fallback(cs))
-                                      : CoverArt(
-                                          coverArtBytes: now.local!.coverArt,
-                                          size: 44),
-                                ),
+                            // Cover art
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(6),
+                              child: SizedBox(
+                                width: 44,
+                                height: 44,
+                                child: now.isStream
+                                    ? (now.stream!.thumbnailUrl != null
+                                        ? CachedNetworkImage(
+                                            imageUrl: now.stream!.thumbnailUrl!,
+                                            fit: BoxFit.cover,
+                                            errorWidget: (_, __, ___) =>
+                                                _fallback(cs),
+                                          )
+                                        : _fallback(cs))
+                                    : CoverArt(
+                                        coverArtBytes: now.local!.coverArt,
+                                        size: 44),
+                              ),
+                            ),
+
+                            const SizedBox(width: 12),
+
+                            // Title (marquee) + artist
+                            Expanded(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  _MarqueeText(
+                                    text: now.title,
+                                    style:
+                                        tt.titleMedium?.copyWith(fontSize: 13) ??
+                                            const TextStyle(fontSize: 13),
+                                  ),
+                                  const SizedBox(height: 1),
+                                  Text(
+                                    now.artist,
+                                    style: tt.bodyMedium?.copyWith(fontSize: 11),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ],
+                              ),
+                            ),
+
+                            // Sleep timer indicator
+                            if (player.sleepTimerActive)
+                              Padding(
+                                padding: const EdgeInsets.only(right: 4),
+                                child: _SleepIndicator(
+                                    remaining: player.sleepRemaining),
                               ),
 
-                              const SizedBox(width: 12),
-
-                              // Title (marquee) + artist
-                              Expanded(
-                                child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    _MarqueeText(
-                                      text: now.title,
-                                      style: tt.titleMedium
-                                              ?.copyWith(fontSize: 13) ??
-                                          const TextStyle(fontSize: 13),
-                                    ),
-                                    const SizedBox(height: 1),
-                                    Text(
-                                      now.artist,
-                                      style:
-                                          tt.bodyMedium?.copyWith(fontSize: 11),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ],
-                                ),
+                            // Previous
+                            if (player.hasPrevious)
+                              IconButton(
+                                iconSize: 24,
+                                icon: Icon(Icons.skip_previous_rounded,
+                                    color: cs.onSurface),
+                                onPressed: player.skipPrevious,
                               ),
 
-                              // Sleep timer indicator
-                              if (player.sleepTimerActive)
-                                Padding(
-                                  padding: const EdgeInsets.only(right: 4),
-                                  child: _SleepIndicator(
-                                      remaining: player.sleepRemaining),
-                                ),
+                            // Play/pause
+                            StreamBuilder<PlayerState>(
+                              stream: player.playerStateStream,
+                              builder: (ctx, snap) {
+                                final isPlaying = snap.data?.playing ?? false;
+                                return IconButton(
+                                  iconSize: 28,
+                                  icon: Icon(
+                                    isPlaying
+                                        ? Icons.pause_rounded
+                                        : Icons.play_arrow_rounded,
+                                    color: cs.onSurface,
+                                  ),
+                                  onPressed: player.togglePlayPause,
+                                );
+                              },
+                            ),
 
-                              // Play/pause
-                              StreamBuilder<PlayerState>(
-                                stream: player.playerStateStream,
-                                builder: (ctx, snap) {
-                                  final isPlaying =
-                                      snap.data?.playing ?? false;
-                                  return IconButton(
-                                    iconSize: 28,
-                                    icon: Icon(
-                                      isPlaying
-                                          ? Icons.pause_rounded
-                                          : Icons.play_arrow_rounded,
-                                      color: cs.onSurface,
-                                    ),
-                                    onPressed: player.togglePlayPause,
-                                  );
-                                },
+                            // Next
+                            if (player.hasNext)
+                              IconButton(
+                                iconSize: 24,
+                                icon: Icon(Icons.skip_next_rounded,
+                                    color: cs.onSurface),
+                                onPressed: player.skipNext,
                               ),
 
-                              // Next
-                              if (player.hasNext)
-                                IconButton(
-                                  iconSize: 24,
-                                  icon: Icon(Icons.skip_next_rounded,
-                                      color: cs.onSurface),
-                                  onPressed: player.skipNext,
-                                ),
-
-                              const SizedBox(width: 4),
-                            ],
-                          ),
+                            const SizedBox(width: 4),
+                          ],
                         ),
+                      ),
 
-                        // ── Playlist chip — own row below controls ────────
-                        // Only shown when playing from a featured playlist.
-                        // Sits below everything so it never overlaps controls.
-                        if (player.sourceFeaturedPlaylist != null)
-                          Padding(
-                            padding: const EdgeInsets.only(
-                                left: 12, right: 12, bottom: 8),
-                            child: Align(
-                              alignment: Alignment.centerLeft,
-                              child: _PlaylistChip(
-                                label: player.sourceFeaturedPlaylist!.title,
-                                onTap: () => Navigator.of(context).push(
-                                  MaterialPageRoute(
-                                    builder: (_) => FeaturedPlaylistScreen(
-                                      playlist:
-                                          player.sourceFeaturedPlaylist!,
-                                    ),
+                      // ── Playlist chip — own row below controls ──────────
+                      // Only rendered when playing from a featured playlist.
+                      if (player.sourceFeaturedPlaylist != null)
+                        Padding(
+                          padding: const EdgeInsets.only(
+                              left: 12, right: 12, bottom: 8),
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: _PlaylistChip(
+                              label: player.sourceFeaturedPlaylist!.title,
+                              onTap: () => Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => FeaturedPlaylistScreen(
+                                    playlist: player.sourceFeaturedPlaylist!,
                                   ),
                                 ),
                               ),
                             ),
                           ),
-                      ],
-                    ),
+                        ),
+                    ],
                   ),
                 ),
               ),
@@ -242,8 +283,6 @@ class _MiniPlayerState extends State<MiniPlayer>
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Marquee text — scrolls right-to-left when the text overflows.
-// Only animates when the text is wider than the available space.
-// Pauses briefly at the start before scrolling, and loops with a gap.
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _MarqueeText extends StatefulWidget {
@@ -288,8 +327,7 @@ class _MarqueeTextState extends State<_MarqueeText>
 
   void _measure() {
     if (!mounted || !_scroll.hasClients) return;
-    final maxScroll = _scroll.position.maxScrollExtent;
-    if (maxScroll > 0) {
+    if (_scroll.position.maxScrollExtent > 0) {
       setState(() => _needsScroll = true);
       _startLoop();
     }
@@ -306,14 +344,10 @@ class _MarqueeTextState extends State<_MarqueeText>
     while (mounted && _needsScroll && _scroll.hasClients) {
       final maxScroll = _scroll.position.maxScrollExtent;
       if (maxScroll <= 0) break;
-      final scrollDuration = Duration(
-        milliseconds: ((maxScroll + _gap) / _pxPerSec * 1000).round(),
-      );
-      await _scroll.animateTo(
-        maxScroll + _gap,
-        duration: scrollDuration,
-        curve: Curves.linear,
-      );
+      final dur = Duration(
+          milliseconds: ((maxScroll + _gap) / _pxPerSec * 1000).round());
+      await _scroll.animateTo(maxScroll + _gap,
+          duration: dur, curve: Curves.linear);
       if (!mounted) return;
       await Future.delayed(const Duration(milliseconds: 600));
       if (!mounted) return;
@@ -331,32 +365,30 @@ class _MarqueeTextState extends State<_MarqueeText>
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        return ClipRect(
-          child: SizedBox(
-            height: (widget.style.fontSize ?? 13) * 1.5,
-            child: _needsScroll
-                ? ListView(
-                    controller: _scroll,
-                    scrollDirection: Axis.horizontal,
-                    physics: const NeverScrollableScrollPhysics(),
-                    children: [
-                      Text(widget.text, style: widget.style),
-                      SizedBox(width: _gap),
-                      Text(widget.text, style: widget.style),
-                    ],
-                  )
-                : SingleChildScrollView(
-                    controller: _scroll,
-                    scrollDirection: Axis.horizontal,
-                    physics: const NeverScrollableScrollPhysics(),
-                    child: Text(widget.text, style: widget.style),
-                  ),
-          ),
-        );
-      },
-    );
+    return LayoutBuilder(builder: (context, constraints) {
+      return ClipRect(
+        child: SizedBox(
+          height: (widget.style.fontSize ?? 13) * 1.5,
+          child: _needsScroll
+              ? ListView(
+                  controller: _scroll,
+                  scrollDirection: Axis.horizontal,
+                  physics: const NeverScrollableScrollPhysics(),
+                  children: [
+                    Text(widget.text, style: widget.style),
+                    SizedBox(width: _gap),
+                    Text(widget.text, style: widget.style),
+                  ],
+                )
+              : SingleChildScrollView(
+                  controller: _scroll,
+                  scrollDirection: Axis.horizontal,
+                  physics: const NeverScrollableScrollPhysics(),
+                  child: Text(widget.text, style: widget.style),
+                ),
+        ),
+      );
+    });
   }
 }
 
