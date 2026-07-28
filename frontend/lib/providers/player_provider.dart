@@ -260,15 +260,14 @@ class PlayerProvider extends ChangeNotifier {
       final params = await _equalizer!.parameters;
       final bands  = params.bands;
       final gains  = _presetGains[preset]!;
+      // In just_audio 0.10.x the dB range is on the parameters object,
+      // not on individual bands. Clamp each gain to that range so Android
+      // doesn't silently reject values that exceed the device's capability.
+      final minDb = params.minDecibels;
+      final maxDb = params.maxDecibels;
       for (var i = 0; i < bands.length && i < gains.length; i++) {
-        final band = bands[i];
-        // Clamp to this device's actual supported dB range.
-        // Hardcoded values may exceed the device's range and get silently
-        // zeroed — reading min/max first guarantees the call succeeds.
-        final min    = band.minDecibels;
-        final max    = band.maxDecibels;
-        final clamped = gains[i].clamp(min, max);
-        await band.setGain(clamped);
+        final clamped = gains[i].clamp(minDb, maxDb).toDouble();
+        await bands[i].setGain(clamped);
       }
     } catch (e) {
       debugPrint('EQ setPreset error: $e');

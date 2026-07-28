@@ -20,9 +20,7 @@ class _MiniPlayerState extends State<MiniPlayer>
   late final AnimationController _slideController;
   late final Animation<Offset> _slideAnim;
 
-  // Tracks live drag offset so the player follows the finger.
   double _dragOffset = 0;
-  // Height of the MiniPlayer — used to threshold the dismiss.
   static const double _height = 64;
 
   @override
@@ -68,164 +66,168 @@ class _MiniPlayerState extends State<MiniPlayer>
         final tt = Theme.of(context).textTheme;
 
         return GestureDetector(
-          // ── Vertical drag: follow finger, dismiss if dragged far enough ──
           onVerticalDragUpdate: (d) {
-            final newOffset = (_dragOffset + d.delta.dy).clamp(0.0, _height * 1.5);
+            final newOffset =
+                (_dragOffset + d.delta.dy).clamp(0.0, _height * 1.5);
             setState(() => _dragOffset = newOffset);
           },
           onVerticalDragEnd: (d) {
-            final flingDown = d.primaryVelocity != null && d.primaryVelocity! > 400;
+            final flingDown =
+                d.primaryVelocity != null && d.primaryVelocity! > 400;
             final draggedFar = _dragOffset > _height * 0.45;
             if (flingDown || draggedFar) {
               _dismiss(context);
             } else {
-              // Snap back.
               setState(() => _dragOffset = 0);
             }
           },
           onVerticalDragCancel: () => setState(() => _dragOffset = 0),
-          // ── Tap opens full player (only when not dragging) ──
           onTap: _dragOffset < 4 ? () => PlayerScreen.show(context) : null,
           child: SlideTransition(
             position: _slideAnim,
             child: Transform.translate(
               offset: Offset(0, _dragOffset),
               child: Opacity(
-                opacity: (1 - (_dragOffset / (_height * 1.5))).clamp(0.0, 1.0),
+                opacity:
+                    (1 - (_dragOffset / (_height * 1.5))).clamp(0.0, 1.0),
                 child: Container(
-            decoration: BoxDecoration(
-              color: const Color(0xFF16213E),
-              border: Border(
-                top: BorderSide(
-                    color: cs.onSurface.withOpacity(0.08), width: 1),
-              ),
-            ),
-            child: SafeArea(
-              top: false,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // ── Main controls row (always 64px) ───────────────────
-                  SizedBox(
-                    height: 64,
-                    child: Row(
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF16213E),
+                    border: Border(
+                      top: BorderSide(
+                          color: cs.onSurface.withOpacity(0.08), width: 1),
+                    ),
+                  ),
+                  child: SafeArea(
+                    top: false,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        const SizedBox(width: 12),
-
-                        // Cover art
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(6),
-                          child: SizedBox(
-                            width: 44,
-                            height: 44,
-                            child: now.isStream
-                                ? (now.stream!.thumbnailUrl != null
-                                    ? CachedNetworkImage(
-                                        imageUrl: now.stream!.thumbnailUrl!,
-                                        fit: BoxFit.cover,
-                                        errorWidget: (_, __, ___) =>
-                                            _fallback(cs),
-                                      )
-                                    : _fallback(cs))
-                                : CoverArt(
-                                    coverArtBytes: now.local!.coverArt,
-                                    size: 44),
-                          ),
-                        ),
-
-                        const SizedBox(width: 12),
-
-                        // Title (marquee) + artist
-                        Expanded(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                        // ── Main controls row (always 64px) ──────────────
+                        SizedBox(
+                          height: 64,
+                          child: Row(
                             children: [
-                              _MarqueeText(
-                                text: now.title,
-                                style:
-                                    tt.titleMedium?.copyWith(fontSize: 13) ??
-                                        const TextStyle(fontSize: 13),
+                              const SizedBox(width: 12),
+
+                              // Cover art
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(6),
+                                child: SizedBox(
+                                  width: 44,
+                                  height: 44,
+                                  child: now.isStream
+                                      ? (now.stream!.thumbnailUrl != null
+                                          ? CachedNetworkImage(
+                                              imageUrl:
+                                                  now.stream!.thumbnailUrl!,
+                                              fit: BoxFit.cover,
+                                              errorWidget: (_, __, ___) =>
+                                                  _fallback(cs),
+                                            )
+                                          : _fallback(cs))
+                                      : CoverArt(
+                                          coverArtBytes: now.local!.coverArt,
+                                          size: 44),
+                                ),
                               ),
-                              const SizedBox(height: 1),
-                              Text(
-                                now.artist,
-                                style: tt.bodyMedium?.copyWith(fontSize: 11),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
+
+                              const SizedBox(width: 12),
+
+                              // Title (marquee) + artist
+                              Expanded(
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    _MarqueeText(
+                                      text: now.title,
+                                      style: tt.titleMedium
+                                              ?.copyWith(fontSize: 13) ??
+                                          const TextStyle(fontSize: 13),
+                                    ),
+                                    const SizedBox(height: 1),
+                                    Text(
+                                      now.artist,
+                                      style:
+                                          tt.bodyMedium?.copyWith(fontSize: 11),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ],
+                                ),
                               ),
+
+                              // Sleep timer indicator
+                              if (player.sleepTimerActive)
+                                Padding(
+                                  padding: const EdgeInsets.only(right: 4),
+                                  child: _SleepIndicator(
+                                      remaining: player.sleepRemaining),
+                                ),
+
+                              // Play/pause
+                              StreamBuilder<PlayerState>(
+                                stream: player.playerStateStream,
+                                builder: (ctx, snap) {
+                                  final isPlaying =
+                                      snap.data?.playing ?? false;
+                                  return IconButton(
+                                    iconSize: 28,
+                                    icon: Icon(
+                                      isPlaying
+                                          ? Icons.pause_rounded
+                                          : Icons.play_arrow_rounded,
+                                      color: cs.onSurface,
+                                    ),
+                                    onPressed: player.togglePlayPause,
+                                  );
+                                },
+                              ),
+
+                              // Next
+                              if (player.hasNext)
+                                IconButton(
+                                  iconSize: 24,
+                                  icon: Icon(Icons.skip_next_rounded,
+                                      color: cs.onSurface),
+                                  onPressed: player.skipNext,
+                                ),
+
+                              const SizedBox(width: 4),
                             ],
                           ),
                         ),
 
-                        // Sleep timer indicator
-                        if (player.sleepTimerActive)
+                        // ── Playlist chip — own row below controls ────────
+                        // Only shown when playing from a featured playlist.
+                        // Sits below everything so it never overlaps controls.
+                        if (player.sourceFeaturedPlaylist != null)
                           Padding(
-                            padding: const EdgeInsets.only(right: 4),
-                            child: _SleepIndicator(
-                                remaining: player.sleepRemaining),
-                          ),
-
-                        // Play/pause
-                        StreamBuilder<PlayerState>(
-                          stream: player.playerStateStream,
-                          builder: (ctx, snap) {
-                            final isPlaying = snap.data?.playing ?? false;
-                            return IconButton(
-                              iconSize: 28,
-                              icon: Icon(
-                                isPlaying
-                                    ? Icons.pause_rounded
-                                    : Icons.play_arrow_rounded,
-                                color: cs.onSurface,
-                              ),
-                              onPressed: player.togglePlayPause,
-                            );
-                          },
-                        ),
-
-                        // Next
-                        if (player.hasNext)
-                          IconButton(
-                            iconSize: 24,
-                            icon: Icon(Icons.skip_next_rounded,
-                                color: cs.onSurface),
-                            onPressed: player.skipNext,
-                          ),
-
-                        const SizedBox(width: 4),
-                      ],
-                    ),
-                  ),
-
-                  // ── Playlist chip row — only shown when in a playlist ──
-                  // Sits below the controls so it never overlaps anything.
-                  if (player.sourceFeaturedPlaylist != null)
-                    Padding(
-                      padding:
-                          const EdgeInsets.only(left: 12, right: 12, bottom: 8),
-                      child: Align(
-                        alignment: Alignment.centerLeft,
-                        child: _PlaylistChip(
-                          label: player.sourceFeaturedPlaylist!.title,
-                          onTap: () => Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) => FeaturedPlaylistScreen(
-                                playlist: player.sourceFeaturedPlaylist!,
+                            padding: const EdgeInsets.only(
+                                left: 12, right: 12, bottom: 8),
+                            child: Align(
+                              alignment: Alignment.centerLeft,
+                              child: _PlaylistChip(
+                                label: player.sourceFeaturedPlaylist!.title,
+                                onTap: () => Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                    builder: (_) => FeaturedPlaylistScreen(
+                                      playlist:
+                                          player.sourceFeaturedPlaylist!,
+                                    ),
+                                  ),
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                      ),
+                      ],
                     ),
-                ],
+                  ),
+                ),
               ),
             ),
           ),
-                ),  // Opacity
-              ),    // Transform.translate
-            ),      // SlideTransition
-          ),        // GestureDetector (outer — drag + tap)
         );
       },
     );
@@ -259,11 +261,8 @@ class _MarqueeTextState extends State<_MarqueeText>
   late final ScrollController _scroll;
   late final AnimationController _controller;
 
-  // Gap between the end of the text and where it loops back.
   static const double _gap = 48.0;
-  // Scroll speed in logical pixels per second.
   static const double _pxPerSec = 40.0;
-  // Pause at the start before scrolling begins (ms).
   static const int _pauseMs = 1800;
 
   bool _needsScroll = false;
@@ -273,7 +272,6 @@ class _MarqueeTextState extends State<_MarqueeText>
     super.initState();
     _scroll = ScrollController();
     _controller = AnimationController(vsync: this);
-    // Wait for layout, then measure.
     WidgetsBinding.instance.addPostFrameCallback((_) => _measure());
   }
 
@@ -281,7 +279,6 @@ class _MarqueeTextState extends State<_MarqueeText>
   void didUpdateWidget(_MarqueeText old) {
     super.didUpdateWidget(old);
     if (old.text != widget.text) {
-      // Text changed (new track) — reset and re-measure.
       _controller.stop();
       if (_scroll.hasClients) _scroll.jumpTo(0);
       setState(() => _needsScroll = false);
@@ -300,7 +297,6 @@ class _MarqueeTextState extends State<_MarqueeText>
 
   void _startLoop() async {
     if (!mounted) return;
-    // Initial pause before first scroll.
     await Future.delayed(const Duration(milliseconds: _pauseMs));
     if (!mounted) return;
     _runScroll();
@@ -310,8 +306,6 @@ class _MarqueeTextState extends State<_MarqueeText>
     while (mounted && _needsScroll && _scroll.hasClients) {
       final maxScroll = _scroll.position.maxScrollExtent;
       if (maxScroll <= 0) break;
-
-      // Scroll to end.
       final scrollDuration = Duration(
         milliseconds: ((maxScroll + _gap) / _pxPerSec * 1000).round(),
       );
@@ -321,15 +315,9 @@ class _MarqueeTextState extends State<_MarqueeText>
         curve: Curves.linear,
       );
       if (!mounted) return;
-
-      // Brief pause at the end.
       await Future.delayed(const Duration(milliseconds: 600));
       if (!mounted) return;
-
-      // Jump back to start instantly.
       _scroll.jumpTo(0);
-
-      // Pause at start again before next scroll.
       await Future.delayed(const Duration(milliseconds: _pauseMs));
     }
   }
@@ -343,8 +331,6 @@ class _MarqueeTextState extends State<_MarqueeText>
 
   @override
   Widget build(BuildContext context) {
-    // Always render as a scrollable row with the text repeated (for the loop
-    // effect). We clip it to the available width.
     return LayoutBuilder(
       builder: (context, constraints) {
         return ClipRect(
@@ -357,9 +343,7 @@ class _MarqueeTextState extends State<_MarqueeText>
                     physics: const NeverScrollableScrollPhysics(),
                     children: [
                       Text(widget.text, style: widget.style),
-                      // Gap spacer so it doesn't hard-jump
                       SizedBox(width: _gap),
-                      // Second copy so the loop feels seamless
                       Text(widget.text, style: widget.style),
                     ],
                   )
