@@ -37,8 +37,10 @@ SPONSORBLOCK_CATS = ["sponsor", "intro", "outro", "selfpromo", "interaction"]
 
 _COOKIES_PATH: str | None = None
 
-# Limit concurrent yt-dlp calls to prevent OOM kills on free tier (512MB RAM)
+# Heavy endpoints (/stream, /download, /playlist, /stream/info) — ffmpeg + full extraction
 _YDL_SEMAPHORE = asyncio.Semaphore(2)
+# Search is much lighter (extract_flat, no download, no ffmpeg) — allow more parallelism
+_SEARCH_SEMAPHORE = asyncio.Semaphore(8)
 
 def _init_cookies() -> None:
     global _COOKIES_PATH
@@ -330,7 +332,7 @@ async def search_youtube(
         def _search():
             with yt_dlp.YoutubeDL(opts) as ydl:
                 return ydl.extract_info(f"ytsearch{limit}:{q}", download=False)
-        async with _YDL_SEMAPHORE:
+        async with _SEARCH_SEMAPHORE:
             info = await asyncio.wait_for(loop.run_in_executor(None, _search), timeout=15)
         results = []
         for entry in (info.get("entries") or []):
