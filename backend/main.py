@@ -79,7 +79,6 @@ def _update_ytdlp() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    _update_ytdlp()
     _init_cookies()
     log.info("YT-MP3 backend starting – download dir: %s", DOWNLOAD_DIR)
     yield
