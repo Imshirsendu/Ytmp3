@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 
 import '../models/featured_playlist.dart';
 import '../models/search_result.dart';
+import '../models/track.dart';
 import '../providers/download_provider.dart';
 import '../providers/player_provider.dart';
 import '../providers/server_provider.dart';
