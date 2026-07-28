@@ -515,6 +515,72 @@ def _cleanup_task(work_dir: Path):
     return BackgroundTask(_rm)
 
 
+@app.get("/playlist")
+async def get_playlist(
+    id: str = Query(..., description="YouTube playlist ID, e.g. PLxxxxxx"),
+    limit: int = Query(50, ge=1, le=100),
+):
+    """
+    Fetch tracks from a real YouTube playlist by ID.
+    Returns the same shape as /search so Flutter needs no changes.
+    Filters out videos longer than 10 minutes (mashups/jukeboxes).
+    """
+    if not id.strip():
+        raise HTTPException(status_code=400, detail="id parameter is required")
+
+    playlist_url = f"https://www.youtube.com/playlist?list={id.strip()}"
+
+    opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "skip_download": True,
+        "extract_flat": True,
+        "playlistend": limit,
+        **_cookie_opt(),
+    }
+
+    try:
+        loop = asyncio.get_event_loop()
+        def _fetch():
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                return ydl.extract_info(playlist_url, download=False)
+        info = await asyncio.wait_for(loop.run_in_executor(None, _fetch), timeout=30)
+
+        results = []
+        for entry in (info.get("entries") or []):
+            if not entry:
+                continue
+            duration = entry.get("duration")
+            # Skip videos longer than 10 minutes (mashups/jukeboxes)
+            if duration and duration > 600:
+                continue
+            video_id = entry.get("id")
+            if not video_id:
+                continue
+            results.append({
+                "id":        video_id,
+                "title":     entry.get("title"),
+                "uploader":  entry.get("uploader") or entry.get("channel"),
+                "duration":  duration,
+                "thumbnail": entry.get("thumbnail") or f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg",
+                "url":       f"https://www.youtube.com/watch?v={video_id}",
+            })
+
+        return {
+            "playlist_id":    id,
+            "playlist_title": info.get("title", ""),
+            "results":        results,
+        }
+
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="Playlist fetch timed out")
+    except yt_dlp.utils.DownloadError as e:
+        raise HTTPException(status_code=422, detail=f"Cannot fetch playlist: {e}")
+    except Exception as e:
+        log.exception("Playlist error for id: %s", id)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/debug/formats")
 async def debug_formats(url: str = Query(...)):
     """Debug: show all formats yt-dlp can extract for a URL."""
