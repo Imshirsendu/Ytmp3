@@ -7,7 +7,7 @@ enum ServerStatus { unknown, checking, online, offline }
 
 class ServerProvider extends ChangeNotifier {
   static const _prefKey    = 'server_url';
-  static const _defaultUrl = 'http://192.168.1.100:8000';
+  static const _defaultUrl = 'https://ytmp3-production-0c04.up.railway.app';
 
   String _serverUrl = _defaultUrl;
   ServerStatus _status = ServerStatus.unknown;

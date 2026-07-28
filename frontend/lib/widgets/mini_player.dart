@@ -105,15 +105,12 @@ class MiniPlayer extends StatelessWidget {
                   },
                 ),
 
-                // Next (only for local queue)
-                if (!now.isStream)
+                // Next — shown for both local queue and stream playlist
+                if (player.hasNext)
                   IconButton(
                     iconSize: 24,
-                    icon: Icon(Icons.skip_next_rounded,
-                        color: player.hasNext
-                            ? cs.onSurface
-                            : cs.onSurface.withOpacity(0.3)),
-                    onPressed: player.hasNext ? player.skipNext : null,
+                    icon: Icon(Icons.skip_next_rounded, color: cs.onSurface),
+                    onPressed: player.skipNext,
                   ),
 
                 const SizedBox(width: 4),

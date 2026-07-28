@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:provider/provider.dart';
@@ -207,7 +208,7 @@ class _PlaylistsRow extends StatelessWidget {
               )
             else
               SizedBox(
-                height: 90,
+                height: 110,
                 child: ListView.separated(
                   scrollDirection: Axis.horizontal,
                   padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
@@ -215,35 +216,76 @@ class _PlaylistsRow extends StatelessWidget {
                   separatorBuilder: (_, __) => const SizedBox(width: 10),
                   itemBuilder: (ctx, i) {
                     final pl = playlists[i];
+                    final firstItem = pl.items.isNotEmpty ? pl.items.first : null;
+                    // Prefer hqdefault.jpg built from youtubeUrl — more reliable
+                    // than the thumbnail stored at stream time (may be expired/low-res).
+                    final thumbUrl = firstItem?.isStream == true
+                        ? (_ytThumb(firstItem!.youtubeUrl) ?? firstItem.thumbnailUrl)
+                        : null;
+                    final localThumb = firstItem?.isStream == false
+                        ? allTracks
+                            .where((t) => t.filePath == firstItem!.filePath)
+                            .firstOrNull
+                            ?.coverArt
+                        : null;
+
                     return GestureDetector(
                       onTap: () => Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (_) => PlaylistDetailScreen(
-                              playlist: pl, allTracks: allTracks),
+                          builder: (_) => PlaylistDetailScreen(playlist: pl),
                         ),
                       ),
                       child: Container(
                         width: 140,
-                        padding: const EdgeInsets.all(10),
                         decoration: BoxDecoration(
                           color: const Color(0xFF16213E),
                           borderRadius: BorderRadius.circular(12),
                         ),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Icon(Icons.queue_music_outlined,
-                                color: cs.primary, size: 22),
-                            const SizedBox(height: 6),
-                            Text(pl.name,
-                                style: tt.titleMedium?.copyWith(fontSize: 13),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis),
-                            Text(
-                                '${pl.trackPaths.length} track${pl.trackPaths.length == 1 ? '' : 's'}',
-                                style: tt.labelSmall),
+                            // ── Thumbnail ──────────────────────────────
+                            ClipRRect(
+                              borderRadius: const BorderRadius.vertical(
+                                  top: Radius.circular(12)),
+                              child: SizedBox(
+                                width: 140,
+                                height: 56,
+                                child: thumbUrl != null
+                                    ? CachedNetworkImage(
+                                        imageUrl: thumbUrl,
+                                        fit: BoxFit.cover,
+                                        placeholder: (_, __) => Container(
+                                            color: const Color(0xFF1A1A2E)),
+                                        errorWidget: (_, __, ___) =>
+                                            _thumbFallback(cs),
+                                      )
+                                    : localThumb != null
+                                        ? Image.memory(localThumb,
+                                            fit: BoxFit.cover,
+                                            width: 140,
+                                            height: 56)
+                                        : _thumbFallback(cs),
+                              ),
+                            ),
+                            // ── Name + count ───────────────────────────
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(8, 5, 8, 6),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(pl.name,
+                                      style: tt.titleMedium
+                                          ?.copyWith(fontSize: 12),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis),
+                                  Text(
+                                      '${pl.items.length} item${pl.items.length == 1 ? '' : 's'}',
+                                      style: tt.labelSmall),
+                                ],
+                              ),
+                            ),
                           ],
                         ),
                       ),
@@ -255,6 +297,21 @@ class _PlaylistsRow extends StatelessWidget {
         );
       },
     );
+  }
+
+  Widget _thumbFallback(ColorScheme cs) => Container(
+        color: cs.surface,
+        child: Icon(Icons.queue_music_outlined,
+            size: 22, color: cs.primary.withOpacity(0.5)),
+      );
+
+  /// Builds a reliable YouTube hqdefault thumbnail URL from a watch URL.
+  /// Returns null if the URL is invalid or missing a video ID.
+  String? _ytThumb(String? youtubeUrl) {
+    if (youtubeUrl == null) return null;
+    final id = Uri.tryParse(youtubeUrl)?.queryParameters['v'];
+    if (id == null || id.isEmpty) return null;
+    return 'https://i.ytimg.com/vi/$id/hqdefault.jpg';
   }
 
   Future<void> _createPlaylist(
@@ -388,7 +445,7 @@ class _TrackTile extends StatelessWidget {
                     color: Color(0xFF6C63FF)),
                 title: Text(pl.name,
                     style: const TextStyle(color: Colors.white)),
-                subtitle: Text('${pl.trackPaths.length} tracks',
+                subtitle: Text('${pl.items.length} items',
                     style: const TextStyle(color: Color(0xFF9090B0))),
                 onTap: () => Navigator.pop(context, pl.id),
               )),

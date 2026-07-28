@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math';
+import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:just_audio/just_audio.dart';
@@ -103,9 +105,25 @@ class PlayerProvider extends ChangeNotifier {
 
   NowPlaying? _current;
 
-  List<Track> _queue        = [];
-  List<int>   _shuffleOrder = [];
-  int         _queueIndex   = 0;
+  List<Track>       _queue        = [];
+  List<int>         _shuffleOrder = [];
+  int               _queueIndex   = 0;
+
+  // Pending stream tracks (Play Next / Add to Queue for stream mode)
+  final List<StreamTrack> _streamQueue = [];
+
+  // Playlist context for stream mode (enables prev/next within a playlist)
+  List<SearchResult> _streamPlaylist  = [];
+  int                _streamIndex     = 0;
+  String             _streamServerUrl = '';
+
+  // Guard: prevents _onTrackComplete re-entry during playlist advance
+  bool _advancing = false;
+  // Suppresses completion events while we are loading a new track
+  bool _suppressCompletion = false;
+
+  // Prefetch cache: youtube URL → resolved StreamTrack
+  final Map<String, StreamTrack> _prefetchCache = {};
 
   bool        _shuffle = false;
   AppLoopMode _loop    = AppLoopMode.none;
@@ -157,18 +175,32 @@ class PlayerProvider extends ChangeNotifier {
     return List.unmodifiable(_queue);
   }
 
+  List<StreamTrack> get streamQueue => List.unmodifiable(_streamQueue);
+
   int get currentOrderedIndex => _queueIndex;
+
+  List<SearchResult> get streamPlaylist => List.unmodifiable(_streamPlaylist);
+  int  get streamIndex => _streamIndex;
+  bool get hasStreamPlaylist => _streamPlaylist.isNotEmpty;
 
   Stream<Duration>    get positionStream    => _player.positionStream;
   Stream<PlayerState> get playerStateStream => _player.playerStateStream;
 
-  bool get hasPrevious =>
-      _current?.isStream == false &&
-      (_queueIndex > 0 || _player.position.inSeconds > 3);
+  bool get hasPrevious {
+    if (_current?.isStream == true) {
+      return _streamPlaylist.isNotEmpty &&
+          (_streamIndex > 0 || _player.position.inSeconds > 3);
+    }
+    return _queueIndex > 0 || _player.position.inSeconds > 3;
+  }
 
   bool get hasNext {
-    if (_current?.isStream == true) return false;
-    if (_loop == AppLoopMode.all)   return true;
+    if (_current?.isStream == true) {
+      if (_streamQueue.isNotEmpty) return true;
+      return _streamPlaylist.isNotEmpty &&
+          _streamIndex < _streamPlaylist.length - 1;
+    }
+    if (_loop == AppLoopMode.all) return true;
     return _queueIndex < _queue.length - 1;
   }
 
@@ -200,6 +232,8 @@ class PlayerProvider extends ChangeNotifier {
       notifyListeners();
       _throttledSaveSession();
     });
+    // Single completion path — processingStateStream is the authoritative source.
+    // playerStateStream also fires completed but we don't use it to avoid double-advance.
     _player.processingStateStream.listen((state) {
       if (state == ProcessingState.completed) _onTrackComplete();
     });
@@ -255,6 +289,38 @@ class PlayerProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Inserts a stream track to play immediately after the current stream.
+  void playNextStream(StreamTrack st) {
+    _streamQueue.insert(0, st);
+    notifyListeners();
+  }
+
+  /// Appends a stream track to the end of the stream queue.
+  void addToQueueStream(StreamTrack st) {
+    _streamQueue.add(st);
+    notifyListeners();
+  }
+
+  /// Plays a track and stores the full playlist as navigation context.
+  Future<void> playStreamFromPlaylist(
+    StreamTrack st, {
+    required List<SearchResult> playlist,
+    required int index,
+    required String serverUrl,
+  }) async {
+    // Set context BEFORE playStream so it survives the clearQueue reset
+    // playStream(clearQueue:false) won't wipe _streamPlaylist
+    _streamPlaylist  = List.from(playlist);
+    _streamIndex     = index;
+    _streamServerUrl = serverUrl;
+    await playStream(st, clearQueue: false);
+    // Re-set after in case playStream overwrote anything
+    _streamPlaylist  = List.from(playlist);
+    _streamIndex     = index;
+    _streamServerUrl = serverUrl;
+    notifyListeners();
+  }
+
   Future<void> playQueueIndex(int orderedIndex) async {
     if (orderedIndex < 0 || orderedIndex >= _queue.length) return;
     _queueIndex = orderedIndex;
@@ -266,14 +332,18 @@ class PlayerProvider extends ChangeNotifier {
         ? _shuffleOrder[orderedIndex]
         : orderedIndex;
     final track = _queue[actualIndex];
+    _suppressCompletion = true;
+    await _player.stop();
     _loading = true;
     _current = NowPlaying.local(track);
     notifyListeners();
     try {
       await _player.setFilePath(track.filePath);
+      _suppressCompletion = false;
       await _player.play();
       _logTrack(track);
     } catch (_) {
+      _suppressCompletion = false;
       if (_queue.length > 1) await skipNext();
     } finally {
       _loading = false;
@@ -283,16 +353,26 @@ class PlayerProvider extends ChangeNotifier {
 
   // ── Online stream playback ────────────────────────────────────────────────
 
-  Future<void> playStream(StreamTrack st) async {
-    _queue   = [];
+  Future<void> playStream(StreamTrack st, {bool clearQueue = true}) async {
+    _suppressCompletion = true; // block false completion from stop()/setUrl()
+    await _player.stop();
+    _queue = [];
+    if (clearQueue) {
+      _streamQueue.clear();
+      _streamPlaylist  = [];
+      _streamIndex     = 0;
+      _streamServerUrl = '';
+    }
     _loading = true;
     _current = NowPlaying.stream(st);
     notifyListeners();
     try {
       await _player.setUrl(st.streamUrl);
+      _suppressCompletion = false; // track is loaded — completions are real now
       await _player.play();
       _logStream(st);
     } catch (e) {
+      _suppressCompletion = false;
       debugPrint('Stream playback error: $e');
     } finally {
       _loading = false;
@@ -308,7 +388,18 @@ class PlayerProvider extends ChangeNotifier {
   Future<void> seek(Duration position) => _player.seek(position);
 
   Future<void> skipNext() async {
-    if (_current?.isStream == true) return;
+    if (_current?.isStream == true) {
+      if (_streamQueue.isNotEmpty) {
+        final next = _streamQueue.removeAt(0);
+        await playStream(next, clearQueue: false);
+        return;
+      }
+      if (_streamPlaylist.isNotEmpty &&
+          _streamIndex < _streamPlaylist.length - 1) {
+        await _resolveAndPlayFromPlaylist(_streamIndex + 1);
+      }
+      return;
+    }
     if (_loop == AppLoopMode.one) {
       await _player.seek(Duration.zero);
       await _player.play();
@@ -325,13 +416,104 @@ class PlayerProvider extends ChangeNotifier {
   }
 
   Future<void> skipPrevious() async {
-    if (_current?.isStream == true) return;
+    if (_current?.isStream == true) {
+      if (_player.position.inSeconds > 3) {
+        await _player.seek(Duration.zero);
+        return;
+      }
+      if (_streamPlaylist.isNotEmpty && _streamIndex > 0) {
+        await _resolveAndPlayFromPlaylist(_streamIndex - 1);
+      }
+      return;
+    }
     if (_player.position.inSeconds > 3) {
       await _player.seek(Duration.zero);
     } else if (_queueIndex > 0) {
       _queueIndex--;
       await _loadLocalAt(_queueIndex);
     }
+  }
+
+  /// Resolves stream URL for playlist[index] using the correct /stream/info endpoint.
+  Future<void> _resolveAndPlayFromPlaylist(int index) async {
+    debugPrint('🔀 _resolveAndPlayFromPlaylist($index) — advancing=$_advancing serverUrl=$_streamServerUrl playlistLen=${_streamPlaylist.length}');
+    if (_advancing) return;
+    if (_streamServerUrl.isEmpty || index >= _streamPlaylist.length) return;
+    _advancing = true;
+    final result    = _streamPlaylist[index];
+    final savedList = List<SearchResult>.from(_streamPlaylist);
+    final savedUrl  = _streamServerUrl;
+    _loading = true;
+    notifyListeners();
+    try {
+      final cached = _prefetchCache.remove(result.url);
+      final st = cached ?? await () async {
+        final res = await Dio().get(
+          '$savedUrl/stream/info?url=${Uri.encodeQueryComponent(result.url)}',
+          options: Options(receiveTimeout: const Duration(seconds: 25)),
+        );
+        final raw  = res.data;
+        final data = (raw is Map<String, dynamic>)
+            ? raw
+            : jsonDecode(raw as String) as Map<String, dynamic>;
+        return StreamTrack(
+          youtubeUrl:   result.url,
+          streamUrl:    data['stream_url'] as String,
+          title:        data['title']      as String? ?? result.title,
+          artist:       data['artist']     as String? ?? result.uploader,
+          thumbnailUrl: data['thumbnail']  as String?,
+          duration: Duration(seconds: (data['duration'] as num?)?.toInt() ?? 0),
+        );
+      }();
+      // Set context BEFORE playStream so clearQueue:false has the right values
+      _streamPlaylist  = savedList;
+      _streamIndex     = index;
+      _streamServerUrl = savedUrl;
+      await playStream(st, clearQueue: false);
+      // playStream(clearQueue:false) won't touch _streamPlaylist — but re-set to be safe
+      _streamPlaylist  = savedList;
+      _streamIndex     = index;
+      _streamServerUrl = savedUrl;
+      notifyListeners();
+    } catch (e) {
+      debugPrint('Playlist nav resolve error: $e');
+      _loading = false;
+      notifyListeners();
+    } finally {
+      _advancing = false;
+    }
+  }
+
+  /// Silently pre-resolves the next track's stream URL into cache.
+  void _prefetchNext(int currentIndex) {
+    final nextIndex = currentIndex + 1;
+    if (_streamServerUrl.isEmpty) return;
+    if (nextIndex >= _streamPlaylist.length) return;
+    final nextResult = _streamPlaylist[nextIndex];
+    if (_prefetchCache.containsKey(nextResult.url)) return; // already cached
+    Future.microtask(() async {
+      try {
+        final res = await Dio().get(
+          '$_streamServerUrl/stream/info?url=${Uri.encodeQueryComponent(nextResult.url)}',
+          options: Options(receiveTimeout: const Duration(seconds: 30)),
+        );
+        final raw  = res.data;
+        final data = (raw is Map<String, dynamic>)
+            ? raw
+            : jsonDecode(raw as String) as Map<String, dynamic>;
+        _prefetchCache[nextResult.url] = StreamTrack(
+          youtubeUrl:   nextResult.url,
+          streamUrl:    data['stream_url'] as String,
+          title:        data['title']      as String? ?? nextResult.title,
+          artist:       data['artist']     as String? ?? nextResult.uploader,
+          thumbnailUrl: data['thumbnail']  as String?,
+          duration: Duration(seconds: (data['duration'] as num?)?.toInt() ?? 0),
+        );
+        debugPrint('✅ Prefetched: ${nextResult.title}');
+      } catch (e) {
+        debugPrint('⚠️ Prefetch failed for ${nextResult.url}: $e');
+      }
+    });
   }
 
   void toggleShuffle() {
@@ -355,6 +537,20 @@ class PlayerProvider extends ChangeNotifier {
   }
 
   void _onTrackComplete() {
+    debugPrint('🎵 _onTrackComplete fired — suppress=$_suppressCompletion advancing=$_advancing isStream=${_current?.isStream} playlistLen=${_streamPlaylist.length} index=$_streamIndex');
+    if (_suppressCompletion || _advancing) return;
+    if (_current?.isStream == true) {
+      if (_streamQueue.isNotEmpty) {
+        final next = _streamQueue.removeAt(0);
+        playStream(next, clearQueue: false);
+        return;
+      }
+      if (_streamPlaylist.isNotEmpty &&
+          _streamIndex < _streamPlaylist.length - 1) {
+        _resolveAndPlayFromPlaylist(_streamIndex + 1);
+      }
+      return;
+    }
     if (_loop == AppLoopMode.one) {
       _player.seek(Duration.zero);
       _player.play();

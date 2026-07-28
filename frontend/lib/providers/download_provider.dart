@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:uuid/uuid.dart';
+import 'package:media_scanner/media_scanner.dart';
 
 import '../models/track.dart';
 
@@ -22,6 +23,10 @@ class DownloadProvider extends ChangeNotifier {
     String serverDownloadUrl, {
     String? title,
   }) async {
+    if (url.trim().isEmpty || serverDownloadUrl.trim().isEmpty) {
+      debugPrint('DownloadProvider: invalid URL — url=$url dl=$serverDownloadUrl');
+      return;
+    }
     final job = DownloadJob(
       id: _uuid.v4(),
       url: url,
@@ -29,6 +34,7 @@ class DownloadProvider extends ChangeNotifier {
     );
     _jobs[job.id] = job;
     notifyListeners();
+    debugPrint('DownloadProvider: starting download → $serverDownloadUrl');
     await _runJob(job, serverDownloadUrl, title: title);
   }
 
@@ -65,13 +71,23 @@ class DownloadProvider extends ChangeNotifier {
         },
         options: Options(
           receiveTimeout: const Duration(minutes: 10),
-          responseType: ResponseType.bytes,
+          // ResponseType must NOT be bytes for dio.download() — it handles streaming internally
         ),
       );
 
       job.title = title ?? safeName;
       job.status = DownloadStatus.done;
       job.progress = 1.0;
+
+      // Tell Android MediaStore about the new file so it appears in file
+      // managers and music apps immediately without needing a device reboot.
+      if (Platform.isAndroid) {
+        try {
+          await MediaScanner.loadMedia(path: finalPath);
+        } catch (e) {
+          debugPrint('MediaScanner error (non-fatal): $e');
+        }
+      }
     } on DioException catch (e) {
       await File(finalPath).delete().catchError((_) => File(finalPath));
       job.status = DownloadStatus.error;
@@ -88,14 +104,13 @@ class DownloadProvider extends ChangeNotifier {
   /// Falls back to app-private documents on iOS or if permission is denied.
   Future<Directory?> _musicDir() async {
     if (Platform.isAndroid) {
-      // Android 13+ uses READ_MEDIA_AUDIO; older needs WRITE_EXTERNAL_STORAGE
-      var status = await Permission.storage.request();
-      if (status.isDenied || status.isPermanentlyDenied) {
-        status = await Permission.audio.request();
-        if (status.isDenied || status.isPermanentlyDenied) {
-          return _fallbackDir();
-        }
-      }
+      // Android 13+ (API 33+): Permission.storage is deprecated, use Permission.audio.
+      // Android 10-12: needs Permission.storage.
+      // Request both — whichever applies will be granted by the OS.
+      final results = await [Permission.storage, Permission.audio].request();
+      final granted = (results[Permission.storage]?.isGranted ?? false) ||
+                      (results[Permission.audio]?.isGranted ?? false);
+      if (!granted) return _fallbackDir();
 
       try {
         final ext = await getExternalStorageDirectory();
@@ -124,11 +139,11 @@ class DownloadProvider extends ChangeNotifier {
 
   /// Strips characters that are illegal in Android filenames.
   String _safeFilename(String raw) {
-    return raw
+    final sanitized = raw
         .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
         .replaceAll(RegExp(r'\s+'), ' ')
-        .trim()
-        .substring(0, raw.length.clamp(0, 100));
+        .trim();
+    return sanitized.substring(0, sanitized.length.clamp(0, 100));
   }
 
   String _friendlyError(DioException e) {

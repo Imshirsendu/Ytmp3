@@ -43,8 +43,8 @@ class _TrendingSection extends StatefulWidget {
 }
 
 class _TrendingSectionState extends State<_TrendingSection> {
-  static const _cacheKey     = 'trending_thumbs_v1';
-  static const _cacheTimeKey = 'trending_thumbs_time_v1';
+  static const _cacheKey     = 'trending_thumbs_v2';
+  static const _cacheTimeKey = 'trending_thumbs_time_v2';
 
   List<String> _thumbnails = [];
   bool _loaded = false;
@@ -73,23 +73,37 @@ class _TrendingSectionState extends State<_TrendingSection> {
       }
     }
 
-    // Fetch fresh thumbnails
+    // Fetch fresh thumbnails from first two queries in parallel
     final server = context.read<ServerProvider>();
     if (!server.isOnline) return;
+
     try {
-      final res = await Dio().get(
-        '${server.serverUrl}/search',
-        queryParameters: {
-          'q':     kTrendingPlaylist.searchQuery,
-          'limit': 4,
-        },
-        options: Options(receiveTimeout: const Duration(seconds: 15)),
-      );
-      final thumbs = (res.data['results'] as List? ?? [])
-          .map((e) => e['thumbnail'] as String?)
-          .whereType<String>()
-          .take(4)
-          .toList();
+      final queries = kTrendingPlaylist.searchQueries.take(2).toList();
+      final futures = queries.map((q) async {
+        try {
+          final res = await Dio().get(
+            '${server.serverUrl}/search',
+            queryParameters: {'q': q, 'limit': 2},
+            options: Options(receiveTimeout: const Duration(seconds: 15)),
+          );
+          return (res.data['results'] as List? ?? [])
+              .map((e) {
+                final url = e['url'] as String? ?? '';
+                final id  = Uri.tryParse(url)?.queryParameters['v'];
+                if (id != null && id.isNotEmpty) {
+                  return 'https://i.ytimg.com/vi/$id/hqdefault.jpg';
+                }
+                return e['thumbnail'] as String?;
+              })
+              .whereType<String>()
+              .toList();
+        } catch (_) {
+          return <String>[];
+        }
+      });
+
+      final results = await Future.wait(futures);
+      final thumbs = results.expand((x) => x).take(4).toList();
 
       await prefs.setString(_cacheKey, jsonEncode(thumbs));
       await prefs.setInt(_cacheTimeKey, now);
@@ -157,15 +171,22 @@ class _ArtistRadioSectionState extends State<_ArtistRadioSection> {
     FocusScope.of(context).unfocus();
     _ctrl.clear();
 
+    // Artist Radio generates 5 targeted queries for variety
     final playlist = FeaturedPlaylist(
       id:          'artist_radio_${name.toLowerCase().replaceAll(' ', '_')}',
       title:       '$name Radio',
       subtitle:    'Best of $name',
-      searchQuery: '$name songs mix best hits',
+      searchQueries: [
+        '$name best songs official audio',
+        '$name hits official video',
+        '$name popular songs official',
+        '$name top tracks official audio',
+        '$name latest songs official',
+      ],
       gradient:    const [Color(0xFF6C63FF), Color(0xFF3B82F6)],
       icon:        Icons.radio_rounded,
       emoji:       '📻',
-      limit:       20,
+      limitPerQuery: 8,
     );
 
     Navigator.push(
@@ -305,7 +326,7 @@ class _MoodChip extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Featured playlists — original vertical list
+// Featured playlists — vertical list
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _FeaturedSection extends StatelessWidget {
@@ -338,7 +359,9 @@ class _FeaturedSection extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Shared playlist card (used by Trending + Featured)
+// Shared playlist card (Trending + Featured)
+// Card thumbnail uses only the FIRST query — fast, one request per card.
+// The full multi-query fetch only happens when the user opens the playlist.
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _PlaylistCard extends StatefulWidget {
@@ -381,17 +404,32 @@ class _PlaylistCardState extends State<_PlaylistCard> {
     }
   }
 
+  /// For the card preview we only fire the FIRST query (fast).
+  /// We ask for 4 results so we can fill the 2×2 collage grid.
   Future<void> _fetchThumbnails() async {
     final server = context.read<ServerProvider>();
     if (!server.isOnline) return;
     try {
       final res = await Dio().get(
         '${server.serverUrl}/search',
-        queryParameters: {'q': widget.playlist.searchQuery, 'limit': 4},
-        options: Options(receiveTimeout: const Duration(seconds: 15)),
+        queryParameters: {
+          'q':     widget.playlist.searchQueries.first,
+          'limit': 4,
+        },
+        options: Options(
+          receiveTimeout: const Duration(seconds: 15),
+          headers: {'Cache-Control': 'no-cache', 'Pragma': 'no-cache'},
+        ),
       );
       final thumbs = (res.data['results'] as List? ?? [])
-          .map((e) => e['thumbnail'] as String?)
+          .map((e) {
+            final url = e['url'] as String? ?? '';
+            final id  = Uri.tryParse(url)?.queryParameters['v'];
+            if (id != null && id.isNotEmpty) {
+              return 'https://i.ytimg.com/vi/$id/hqdefault.jpg';
+            }
+            return e['thumbnail'] as String?;
+          })
           .whereType<String>()
           .take(4)
           .toList();

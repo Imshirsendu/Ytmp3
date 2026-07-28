@@ -1,10 +1,13 @@
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../providers/recently_played_provider.dart';
 import '../providers/library_provider.dart';
 import '../providers/player_provider.dart';
+import '../providers/server_provider.dart';
+import '../models/search_result.dart';
 import '../screens/player_screen.dart';
 
 /// Drop this widget anywhere — it shows up to 10 recently played
@@ -51,8 +54,7 @@ class RecentlyPlayedSection extends StatelessWidget {
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
                 itemCount: entries.length,
                 separatorBuilder: (_, __) => const SizedBox(width: 10),
-                itemBuilder: (ctx, i) =>
-                    _RecentCard(entry: entries[i]),
+                itemBuilder: (ctx, i) => _RecentCard(entry: entries[i]),
               ),
             ),
           ],
@@ -166,18 +168,46 @@ class _RecentCard extends StatelessWidget {
     final player = context.read<PlayerProvider>();
 
     if (entry.isStream) {
-      // For streams we can't re-resolve the audio URL (it expires), so
-      // we just open the player — user can search again from the mini banner.
+      // ── Re-stream using the stored YouTube URL ──────────────────────
+      // Mirrors the exact same flow as _stream() in search_screen.dart.
+      final server = context.read<ServerProvider>();
+
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Search for this track to stream it again'),
-          duration: Duration(seconds: 2),
-        ),
+            content: Text('Loading stream…'),
+            duration: Duration(seconds: 2)),
       );
+
+      try {
+        final res = await Dio().get(
+          server.streamInfoUrl(entry.id), // entry.id == youtubeUrl for streams
+          options: Options(receiveTimeout: const Duration(seconds: 25)),
+        );
+        final data = res.data as Map<String, dynamic>;
+        final st = StreamTrack(
+          youtubeUrl:   entry.id,
+          streamUrl:    data['stream_url'] as String,
+          title:        data['title']      as String? ?? entry.title,
+          artist:       data['artist']     as String? ?? entry.artist,
+          thumbnailUrl: data['thumbnail']  as String? ?? entry.thumbnailUrl,
+          duration: Duration(
+              seconds: (data['duration'] as num?)?.toInt() ?? 0),
+        );
+        await player.playStream(st);
+        if (context.mounted) PlayerScreen.show(context);
+      } catch (e) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+                content: Text('Stream failed: $e'),
+                backgroundColor: Theme.of(context).colorScheme.error),
+          );
+        }
+      }
       return;
     }
 
-    // Local track — look it up from the library and play it
+    // ── Local track — look it up from the library and play it ─────────
     final lib = context.read<LibraryProvider>();
     final track = lib.trackMap[entry.id];
     if (track == null) {

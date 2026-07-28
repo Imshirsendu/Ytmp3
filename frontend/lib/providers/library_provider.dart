@@ -1,112 +1,123 @@
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
-import 'package:id3tag/id3tag.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../models/track.dart';
 
-export '../models/track.dart' show DownloadStatus, DownloadJob;
-
 enum SortOrder { dateAdded, title, artist }
 
 class LibraryProvider extends ChangeNotifier {
-  List<Track> _tracks = [];
-  String _searchQuery = '';
-  SortOrder _sortOrder = SortOrder.dateAdded;
-  bool _loading = false;
+  List<Track> _allTracks   = [];
+  List<Track> _filtered    = [];
+  bool        _loading     = false;
+  SortOrder   _sortOrder   = SortOrder.dateAdded;
+  String      _searchQuery = '';
 
-  List<Track> get tracks {
-    var list = List<Track>.from(_tracks);
+  List<Track> get tracks      => _filtered;
+  bool        get loading     => _loading;
+  SortOrder   get sortOrder   => _sortOrder;
+  String      get searchQuery => _searchQuery;
+  Map<String, Track> get trackMap =>
+      { for (final t in _allTracks) t.filePath: t };
 
-    if (_searchQuery.isNotEmpty) {
-      final q = _searchQuery.toLowerCase();
-      list = list
-          .where((t) =>
-              t.title.toLowerCase().contains(q) ||
-              t.artist.toLowerCase().contains(q) ||
-              t.album.toLowerCase().contains(q))
-          .toList();
-    }
-
-    switch (_sortOrder) {
-      case SortOrder.dateAdded:
-        list.sort((a, b) => b.dateAdded.compareTo(a.dateAdded));
-      case SortOrder.title:
-        list.sort((a, b) => a.title.compareTo(b.title));
-      case SortOrder.artist:
-        list.sort((a, b) => a.artist.compareTo(b.artist));
-    }
-
-    return list;
-  }
-
-  /// Quick lookup map used by PlaylistProvider.resolveTracks
-  Map<String, Track> get trackMap => {for (final t in _tracks) t.filePath: t};
-
-  bool get loading => _loading;
-  String get searchQuery => _searchQuery;
-  SortOrder get sortOrder => _sortOrder;
-
-  void setSearch(String q) {
-    _searchQuery = q;
-    notifyListeners();
-  }
-
-  void setSortOrder(SortOrder order) {
-    _sortOrder = order;
-    notifyListeners();
+  LibraryProvider() {
+    refresh();
   }
 
   Future<void> refresh() async {
     _loading = true;
     notifyListeners();
-
     try {
-      final dirs = await _allMusicDirs();
-      final seen = <String>{};
-      final tracks = <Track>[];
-
-      for (final dir in dirs) {
-        if (!dir.existsSync()) continue;
+      final dir = await _musicDir();
+      if (dir == null || !dir.existsSync()) {
+        _allTracks = [];
+      } else {
         final files = dir
-            .listSync(recursive: true)   // recursive so sub-folders work too
+            .listSync(recursive: false)
             .whereType<File>()
-            .where((f) => f.path.toLowerCase().endsWith('.mp3'))
+            .where((f) => f.path.endsWith('.mp3'))
             .toList();
 
-        for (final file in files) {
-          if (seen.contains(file.path)) continue;
-          seen.add(file.path);
-          final track = await _readTrack(file);
-          if (track != null) tracks.add(track);
+        final tracks = <Track>[];
+        for (final f in files) {
+          try {
+            final stat  = f.statSync();
+            final name  = f.path.split('/').last.split('\\').last;
+            final title = name.endsWith('.mp3')
+                ? name.substring(0, name.length - 4)
+                : name;
+            tracks.add(Track(
+              id:        f.path,
+              filePath:  f.path,
+              title:     title,
+              artist:    'Unknown Artist',
+              album:     'YT-MP3',
+              duration:  Duration.zero,
+              dateAdded: stat.modified,
+              coverArt:  null,
+            ));
+          } catch (_) {}
         }
+        _allTracks = tracks;
       }
-
-      _tracks = tracks;
     } catch (e) {
-      debugPrint('LibraryProvider.refresh error: $e');
+      debugPrint('LibraryProvider refresh error: $e');
+      _allTracks = [];
+    }
+    _loading = false;
+    _applyFilterAndSort();
+  }
+
+  void setSortOrder(SortOrder order) {
+    _sortOrder = order;
+    _applyFilterAndSort();
+  }
+
+  void setSearch(String query) {
+    _searchQuery = query;
+    _applyFilterAndSort();
+  }
+
+  Future<void> deleteTrack(Track track) async {
+    try {
+      final f = File(track.filePath);
+      if (f.existsSync()) f.deleteSync();
+    } catch (e) {
+      debugPrint('LibraryProvider deleteTrack error: $e');
+    }
+    _allTracks.removeWhere((t) => t.filePath == track.filePath);
+    _applyFilterAndSort();
+  }
+
+  void _applyFilterAndSort() {
+    var list = List<Track>.from(_allTracks);
+
+    if (_searchQuery.isNotEmpty) {
+      final q = _searchQuery.toLowerCase();
+      list = list.where((t) =>
+          t.title.toLowerCase().contains(q) ||
+          t.artist.toLowerCase().contains(q)).toList();
     }
 
-    _loading = false;
+    switch (_sortOrder) {
+      case SortOrder.dateAdded:
+        list.sort((a, b) => b.dateAdded.compareTo(a.dateAdded));
+        break;
+      case SortOrder.title:
+        list.sort((a, b) => a.title.compareTo(b.title));
+        break;
+      case SortOrder.artist:
+        list.sort((a, b) => a.artist.compareTo(b.artist));
+        break;
+    }
+
+    _filtered = list;
     notifyListeners();
   }
 
-  /// Returns all directories the library should scan.
-  /// Covers: app-private folder, external /sdcard/Music/YT-MP3,
-  /// and any other standard external storage location.
-  Future<List<Directory>> _allMusicDirs() async {
-    final dirs = <Directory>[];
-
-    // 1. App-private documents folder (iOS + Android fallback)
+  Future<Directory?> _musicDir() async {
     try {
-      final base = await getApplicationDocumentsDirectory();
-      dirs.add(Directory('${base.path}/Music'));
-    } catch (_) {}
-
-    if (Platform.isAndroid) {
-      // 2. External storage → climb to /sdcard root → Music/YT-MP3
-      try {
+      if (Platform.isAndroid) {
         final ext = await getExternalStorageDirectory();
         if (ext != null) {
           final parts = ext.path.split('/');
@@ -114,72 +125,13 @@ class LibraryProvider extends ChangeNotifier {
           final sdcard = androidIdx > 0
               ? parts.sublist(0, androidIdx).join('/')
               : ext.path;
-          dirs.add(Directory('$sdcard/Music/YT-MP3'));
-          // Also scan the root Music folder so music added manually is visible
-          dirs.add(Directory('$sdcard/Music'));
+          return Directory('$sdcard/Music/YT-MP3');
         }
-      } catch (_) {}
-
-      // 3. Fallback: well-known absolute paths on most Android ROMs
-      for (final path in [
-        '/storage/emulated/0/Music/YT-MP3',
-        '/storage/emulated/0/Music',
-        '/sdcard/Music/YT-MP3',
-        '/sdcard/Music',
-      ]) {
-        final d = Directory(path);
-        if (d.existsSync()) dirs.add(d);
       }
-    }
-
-    return dirs;
-  }
-
-  Future<Track?> _readTrack(File file) async {
-    try {
-      final stat = file.statSync();
-      final parser = ID3TagReader.path(file.path);
-      final tag = await parser.readTag();
-
-      final title  = _nonEmpty(tag.title)  ?? _titleFromPath(file.path);
-      final artist = _nonEmpty(tag.artist) ?? 'Unknown Artist';
-      final album  = _nonEmpty(tag.album)  ?? 'Unknown Album';
-      final duration = tag.duration ?? Duration.zero;
-
-      Uint8List? coverArt;
-      if (tag.pictures.isNotEmpty) {
-        coverArt = Uint8List.fromList(tag.pictures.first.imageData);
-      }
-
-      return Track(
-        id: file.path,
-        title: title,
-        artist: artist,
-        album: album,
-        duration: duration,
-        filePath: file.path,
-        dateAdded: stat.modified,
-        coverArt: coverArt,
-      );
-    } catch (e) {
-      debugPrint('Could not read track ${file.path}: $e');
+      final base = await getApplicationDocumentsDirectory();
+      return Directory('${base.path}/Music');
+    } catch (_) {
       return null;
     }
-  }
-
-  String? _nonEmpty(String? s) =>
-      (s != null && s.trim().isNotEmpty) ? s.trim() : null;
-
-  String _titleFromPath(String path) {
-    final name = path.split('/').last.split('\\').last;
-    return name.replaceAll(RegExp(r'\.mp3$', caseSensitive: false), '');
-  }
-
-  Future<void> deleteTrack(Track track) async {
-    try {
-      await File(track.filePath).delete();
-    } catch (_) {}
-    _tracks.remove(track);
-    notifyListeners();
   }
 }

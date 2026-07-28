@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../providers/player_provider.dart';
+import '../providers/playlist_provider.dart';
 import '../screens/queue_screen.dart';
 import '../widgets/cover_art.dart';
 
@@ -43,6 +44,19 @@ class PlayerScreen extends StatelessWidget {
             style: tt.labelSmall?.copyWith(letterSpacing: 2)),
         centerTitle: true,
         actions: [
+          // ── Add to playlist button (streams only) ────────────────────
+          Consumer<PlayerProvider>(
+            builder: (ctx, player, _) {
+              final now = player.current;
+              if (now == null || !now.isStream) return const SizedBox.shrink();
+              return IconButton(
+                icon: const Icon(Icons.playlist_add_rounded),
+                tooltip: 'Add to playlist',
+                onPressed: () =>
+                    _AddToPlaylistSheet.show(context, now.stream!),
+              );
+            },
+          ),
           // ── Share button ─────────────────────────────────────────────
           Consumer<PlayerProvider>(
             builder: (ctx, player, _) {
@@ -229,8 +243,10 @@ class PlayerScreen extends StatelessWidget {
 
                   const SizedBox(height: 16),
 
-                  // ── Shuffle / Loop (local only) ──────────────────────
-                  if (!now.isStream)
+                  // ── Shuffle / Loop ────────────────────────────────────
+                  // Show for local queue always; show for streams when a
+                  // playlist context is loaded (so the buttons do something)
+                  if (!now.isStream || player.hasStreamPlaylist)
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
@@ -264,27 +280,33 @@ class PlayerScreen extends StatelessWidget {
                   StreamBuilder<PlayerState>(
                     stream: player.playerStateStream,
                     builder: (ctx, snap) {
-                      final isPlaying = snap.data?.playing ?? false;
+                      // Use player.playing (backed by _player.playing) so the
+                      // button reflects real state even before the stream emits.
+                      final isPlaying = player.playing;
+                      final processingState = snap.data?.processingState;
+                      // For streams: buffering is normal — only spinner on explicit player.loading.
+                      // For local: show spinner during initial load/buffer only.
+                      final isStream = player.current!.isStream;
                       final isLoading = player.loading ||
-                          snap.data?.processingState ==
-                              ProcessingState.loading ||
-                          snap.data?.processingState ==
-                              ProcessingState.buffering;
+                          (!isStream && processingState == ProcessingState.loading) ||
+                          (!isStream &&
+                              processingState == ProcessingState.buffering &&
+                              !isPlaying);
 
                       return Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          if (!now.isStream)
-                            IconButton(
-                              iconSize: 36,
-                              icon: Icon(Icons.skip_previous_rounded,
-                                  color: player.hasPrevious
-                                      ? cs.onSurface
-                                      : cs.onSurface.withOpacity(0.3)),
-                              onPressed: player.hasPrevious
-                                  ? player.skipPrevious
-                                  : null,
-                            ),
+                          // Prev — always shown; dimmed when unavailable
+                          IconButton(
+                            iconSize: 36,
+                            icon: Icon(Icons.skip_previous_rounded,
+                                color: player.hasPrevious
+                                    ? cs.onSurface
+                                    : cs.onSurface.withOpacity(0.3)),
+                            onPressed: player.hasPrevious
+                                ? player.skipPrevious
+                                : null,
+                          ),
 
                           const SizedBox(width: 16),
 
@@ -323,16 +345,16 @@ class PlayerScreen extends StatelessWidget {
 
                           const SizedBox(width: 16),
 
-                          if (!now.isStream)
-                            IconButton(
-                              iconSize: 36,
-                              icon: Icon(Icons.skip_next_rounded,
-                                  color: player.hasNext
-                                      ? cs.onSurface
-                                      : cs.onSurface.withOpacity(0.3)),
-                              onPressed:
-                                  player.hasNext ? player.skipNext : null,
-                            ),
+                          // Next — always shown; dimmed when unavailable
+                          IconButton(
+                            iconSize: 36,
+                            icon: Icon(Icons.skip_next_rounded,
+                                color: player.hasNext
+                                    ? cs.onSurface
+                                    : cs.onSurface.withOpacity(0.3)),
+                            onPressed:
+                                player.hasNext ? player.skipNext : null,
+                          ),
                         ],
                       );
                     },
@@ -628,6 +650,168 @@ class _SleepTimerSheet extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Add to Playlist bottom sheet
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _AddToPlaylistSheet extends StatelessWidget {
+  final StreamTrack stream;
+  const _AddToPlaylistSheet({required this.stream});
+
+  static void show(BuildContext context, StreamTrack stream) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1A1A2E),
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (_) => ChangeNotifierProvider.value(
+        value: context.read<PlaylistProvider>(),
+        child: _AddToPlaylistSheet(stream: stream),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs       = Theme.of(context).colorScheme;
+    final tt       = Theme.of(context).textTheme;
+    final pp       = context.watch<PlaylistProvider>();
+    final playlists = pp.playlists;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 20, 24, 36),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Handle
+          Center(
+            child: Container(
+              width: 36, height: 4,
+              decoration: BoxDecoration(
+                color: cs.onSurface.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          Row(
+            children: [
+              Text('Add to Playlist', style: tt.titleMedium),
+              const Spacer(),
+              TextButton.icon(
+                onPressed: () => _createAndAdd(context, pp),
+                icon: const Icon(Icons.add, size: 18),
+                label: const Text('New'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+
+          if (playlists.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              child: Center(
+                child: Text('No playlists yet — tap New to create one',
+                    style: tt.bodyMedium),
+              ),
+            )
+          else
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 300),
+              child: ListView.separated(
+                shrinkWrap: true,
+                itemCount: playlists.length,
+                separatorBuilder: (_, __) => const Divider(height: 1),
+                itemBuilder: (ctx, i) {
+                  final pl = playlists[i];
+                  final already = pp.isInPlaylist(pl.id, stream.youtubeUrl);
+                  return ListTile(
+                    leading: Icon(Icons.queue_music_rounded,
+                        color: already ? cs.primary : cs.onSurface.withOpacity(0.5)),
+                    title: Text(pl.name, style: tt.titleMedium),
+                    subtitle: Text('${pl.items.length} items',
+                        style: tt.bodyMedium),
+                    trailing: already
+                        ? Icon(Icons.check_circle_rounded,
+                            color: cs.primary, size: 20)
+                        : null,
+                    onTap: already
+                        ? null
+                        : () async {
+                            await pp.addItem(
+                              pl.id,
+                              PlaylistItem.stream(
+                                url: stream.youtubeUrl,
+                                trackTitle: stream.title,
+                                trackArtist: stream.artist,
+                                thumb: stream.thumbnailUrl,
+                              ),
+                            );
+                            if (context.mounted) {
+                              Navigator.pop(context);
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                    content: Text(
+                                        'Added to ${pl.name}',
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis)),
+                              );
+                            }
+                          },
+                  );
+                },
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _createAndAdd(
+      BuildContext context, PlaylistProvider pp) async {
+    final ctrl = TextEditingController();
+    final name = await showDialog<String>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A2E),
+        title: const Text('New Playlist'),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          decoration: const InputDecoration(hintText: 'Playlist name'),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.pop(context, ctrl.text.trim()),
+              child: const Text('Create')),
+        ],
+      ),
+    );
+    if (name == null || name.isEmpty) return;
+    final pl = await pp.createPlaylist(name);
+    await pp.addItem(
+      pl.id,
+      PlaylistItem.stream(
+        url: stream.youtubeUrl,
+        trackTitle: stream.title,
+        trackArtist: stream.artist,
+        thumb: stream.thumbnailUrl,
+      ),
+    );
+    if (context.mounted) {
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Added to $name')),
+      );
+    }
   }
 }
 

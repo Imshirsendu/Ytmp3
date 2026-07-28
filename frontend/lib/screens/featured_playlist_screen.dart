@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
@@ -10,6 +12,7 @@ import '../providers/player_provider.dart';
 import '../providers/server_provider.dart';
 import '../screens/player_screen.dart';
 import '../widgets/mini_player.dart';
+import '../widgets/track_options_sheet.dart';
 
 class FeaturedPlaylistScreen extends StatefulWidget {
   final FeaturedPlaylist playlist;
@@ -35,32 +38,86 @@ class _FeaturedPlaylistScreenState extends State<FeaturedPlaylistScreen> {
     _fetchTracks();
   }
 
+  /// Fires all searchQueries in parallel, merges results, deduplicates by
+  /// normalized title so the same song from two queries only appears once.
   Future<void> _fetchTracks() async {
     setState(() { _loading = true; _error = null; });
+
     final server = context.read<ServerProvider>();
     if (!server.isOnline) {
       setState(() { _loading = false; _error = 'Server is offline'; });
       return;
     }
+
     try {
-      final res = await _dio.get(
-        '${server.serverUrl}/search',
-        queryParameters: {
-          'q':     widget.playlist.searchQuery,
-          'limit': widget.playlist.limit,
-        },
-        options: Options(receiveTimeout: const Duration(seconds: 20)),
-      );
-      final list = (res.data['results'] as List? ?? []);
+      // Fire every query concurrently
+      final futures = widget.playlist.searchQueries.map((q) async {
+        try {
+          final res = await _dio.get(
+            '${server.serverUrl}/search',
+            queryParameters: {
+              'q':     q,
+              'limit': widget.playlist.limitPerQuery,
+            },
+            options: Options(receiveTimeout: const Duration(seconds: 20)),
+          );
+          return (res.data['results'] as List? ?? [])
+              .map((e) => SearchResult.fromJson(e as Map<String, dynamic>))
+              .toList();
+        } catch (_) {
+          // If one query fails, skip it — others still contribute
+          return <SearchResult>[];
+        }
+      });
+
+      final results = await Future.wait(futures);
+
+      // Flatten, filter, deduplicate
+      final seen = <String>{};
+      final merged = <SearchResult>[];
+
+      for (final batch in results) {
+        for (final track in batch) {
+          // Skip mashups / jukeboxes (> 20 min)
+          if (track.duration != null && track.duration! > 1200) continue;
+
+          // Normalize: lowercase, strip punctuation and common suffixes
+          final normalized = _normalize(track.title);
+          if (seen.contains(normalized)) continue;
+
+          seen.add(normalized);
+          merged.add(track);
+        }
+      }
+
       setState(() {
-        _tracks  = list
-            .map((e) => SearchResult.fromJson(e as Map<String, dynamic>))
-            .toList();
+        _tracks  = merged;
         _loading = false;
       });
     } catch (e) {
       setState(() { _loading = false; _error = e.toString(); });
     }
+  }
+
+  /// Normalize a title for deduplication:
+  /// lower-case → strip parens/brackets content → strip common suffixes
+  /// → collapse whitespace.
+  String _normalize(String title) {
+    return title
+        .toLowerCase()
+        // Remove content in parens/brackets e.g. "(Official Audio)", "[HD]"
+        .replaceAll(RegExp(r'\([^)]*\)'), '')
+        .replaceAll(RegExp(r'\[[^\]]*\]'), '')
+        // Strip common suffix words
+        .replaceAll(
+            RegExp(
+                r'\b(official|audio|video|full|song|music|hd|4k|lyric|lyrics|ft|feat|remastered)\b'),
+            '')
+        // Strip non-alphanumeric (except spaces)
+        .replaceAll(RegExp(r'[^a-z0-9 ]'), '')
+        // Collapse whitespace
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
   }
 
   Future<void> _streamTrack(SearchResult result,
@@ -74,27 +131,40 @@ class _FeaturedPlaylistScreenState extends State<FeaturedPlaylistScreen> {
       debugPrint('▶ STREAM REQUEST: $streamUrl');
       final res = await _dio.get(
         streamUrl,
-        options: Options(receiveTimeout: const Duration(seconds: 25)),
+        options: Options(receiveTimeout: const Duration(seconds: 45)),
       );
-      final data = res.data as Map<String, dynamic>;
+      final raw  = res.data;
+      final data = (raw is Map<String, dynamic>)
+          ? raw
+          : jsonDecode(raw as String) as Map<String, dynamic>;
       final st = StreamTrack(
         youtubeUrl:   result.url,
-      streamUrl: data['stream_url'] as String,
+        streamUrl:    data['stream_url'] as String,
         title:        data['title']     as String? ?? result.title,
         artist:       data['artist']    as String? ?? result.uploader,
         thumbnailUrl: data['thumbnail'] as String?,
         duration: Duration(
             seconds: (data['duration'] as num?)?.toInt() ?? 0),
       );
-      await player.playStream(st);
+      // Pass full playlist context so prev/next works in player
+      final index = _tracks.indexOf(result);
+      await player.playStreamFromPlaylist(
+        st,
+        playlist:  _tracks,
+        index:     index < 0 ? 0 : index,
+        serverUrl: server.serverUrl,
+      );
       if (andOpenPlayer && context.mounted) PlayerScreen.show(context);
     } catch (e) {
       if (context.mounted) {
         String msg = 'Stream failed';
         if (e is DioException) {
           final detail = e.response?.data?['detail'];
-          msg = detail != null ? 'Stream failed: $detail' : 'Stream failed: ${e.message}';
-          debugPrint('▶ STREAM ERROR: ${e.response?.statusCode} — ${e.response?.data}');
+          msg = detail != null
+              ? 'Stream failed: $detail'
+              : 'Stream failed: ${e.message}';
+          debugPrint(
+              '▶ STREAM ERROR: ${e.response?.statusCode} — ${e.response?.data}');
         }
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(msg), backgroundColor: Colors.red),
@@ -146,10 +216,17 @@ class _FeaturedPlaylistScreenState extends State<FeaturedPlaylistScreen> {
     );
   }
 
+  /// Extracts video ID from a YouTube watch URL and returns hqdefault.jpg.
+  String? _ytThumb(String url) {
+    final id = Uri.tryParse(url)?.queryParameters['v'];
+    if (id == null || id.isEmpty) return null;
+    return 'https://i.ytimg.com/vi/$id/hqdefault.jpg';
+  }
+
   /// First 4 thumbnails used for the header collage
   List<String> get _headerThumbnails => _tracks
       .take(4)
-      .map((t) => t.thumbnail)
+      .map((t) => _ytThumb(t.url) ?? t.thumbnail)
       .whereType<String>()
       .toList();
 
@@ -230,6 +307,7 @@ class _FeaturedPlaylistScreenState extends State<FeaturedPlaylistScreen> {
                               isDownloaded: _downloaded.contains(_tracks[i].id),
                               onStream:     () => _streamTrack(_tracks[i]),
                               onDownload:   () => _downloadTrack(_tracks[i]),
+                              onOptions:    () => TrackOptionsSheet.show(ctx, _tracks[i]),
                             ),
                           ),
           ),
@@ -409,6 +487,7 @@ class _TrackRow extends StatelessWidget {
   final bool isDownloaded;
   final VoidCallback onStream;
   final VoidCallback onDownload;
+  final VoidCallback onOptions;
 
   const _TrackRow({
     required this.index,
@@ -417,6 +496,7 @@ class _TrackRow extends StatelessWidget {
     required this.isDownloaded,
     required this.onStream,
     required this.onDownload,
+    required this.onOptions,
   });
 
   @override
@@ -440,16 +520,25 @@ class _TrackRow extends StatelessWidget {
           const SizedBox(width: 8),
           ClipRRect(
             borderRadius: BorderRadius.circular(6),
-            child: result.thumbnail != null
-                ? CachedNetworkImage(
-                    imageUrl: result.thumbnail!,
-                    width: 48,
-                    height: 48,
-                    fit: BoxFit.cover,
-                    placeholder: (_, __) => _placeholder(cs),
-                    errorWidget: (_, __, ___) => _placeholder(cs),
-                  )
-                : _placeholder(cs),
+            child: Builder(builder: (context) {
+              final thumb = () {
+                final id = Uri.tryParse(result.url)?.queryParameters['v'];
+                if (id != null && id.isNotEmpty) {
+                  return 'https://i.ytimg.com/vi/$id/hqdefault.jpg';
+                }
+                return result.thumbnail;
+              }();
+              return thumb != null
+                  ? CachedNetworkImage(
+                      imageUrl: thumb,
+                      width: 48,
+                      height: 48,
+                      fit: BoxFit.cover,
+                      placeholder: (_, __) => _placeholder(cs),
+                      errorWidget: (_, __, ___) => _placeholder(cs),
+                    )
+                  : _placeholder(cs);
+            }),
           ),
         ],
       ),
@@ -490,6 +579,12 @@ class _TrackRow extends StatelessWidget {
                   tooltip: 'Download',
                   onPressed: onDownload,
                 ),
+          IconButton(
+            icon: Icon(Icons.more_vert_rounded,
+                color: cs.onSurface.withOpacity(0.5), size: 20),
+            tooltip: 'More options',
+            onPressed: onOptions,
+          ),
         ],
       ),
       onTap: onStream,
