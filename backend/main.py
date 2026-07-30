@@ -360,7 +360,7 @@ async def search_playlists(
     q: str = Query(...),
     limit: int = Query(10, ge=1, le=25),
 ):
-    """Search YouTube for playlists (not videos). Returns playlist id, title, channel, thumbnail, video_count."""
+    """Search YouTube for playlists. Tries ytsearchplaylist first, falls back to ytsearch."""
     if not q.strip():
         raise HTTPException(status_code=400, detail="q parameter is required")
 
@@ -372,20 +372,20 @@ async def search_playlists(
         **_cookie_opt(),
     }
 
-    try:
-        loop = asyncio.get_event_loop()
-        def _search():
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                return ydl.extract_info(f"ytsearchplaylist{limit}:{q}", download=False)
-        async with _SEARCH_SEMAPHORE:
-            info = await asyncio.wait_for(loop.run_in_executor(None, _search), timeout=15)
-
+    def _parse_playlist_entries(info: dict) -> list:
         results = []
         for entry in (info.get("entries") or []):
             if not entry:
                 continue
             playlist_id = entry.get("id") or entry.get("playlist_id")
             if not playlist_id:
+                continue
+            # In fallback mode, video entries sneak in — skip them.
+            # Real playlist IDs start with PL, RD, OL, UU, FL, etc.
+            entry_type = entry.get("_type") or ""
+            if entry_type == "url" and not any(
+                playlist_id.startswith(p) for p in ("PL", "RD", "OL", "UU", "FL", "VL")
+            ):
                 continue
             results.append({
                 "id":          playlist_id,
@@ -394,11 +394,43 @@ async def search_playlists(
                 "thumbnail":   entry.get("thumbnail"),
                 "video_count": entry.get("playlist_count") or entry.get("n_entries"),
             })
+        return results
+
+    loop = asyncio.get_event_loop()
+
+    # ── Attempt 1: ytsearchplaylist (yt-dlp >= 2023.x) ──────────────────────
+    try:
+        def _search_pl():
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                return ydl.extract_info(f"ytsearchplaylist{limit}:{q}", download=False)
+        async with _SEARCH_SEMAPHORE:
+            info = await asyncio.wait_for(loop.run_in_executor(None, _search_pl), timeout=15)
+        results = _parse_playlist_entries(info)
+        if results:
+            return {"query": q, "results": results}
+        # Empty result — fall through to fallback
+        log.warning("ytsearchplaylist returned no results for: %s — trying fallback", q)
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="Playlist search timed out")
+    except Exception as e:
+        log.warning("ytsearchplaylist failed (%s) — falling back to ytsearch", e)
+
+    # ── Attempt 2: regular ytsearch filtered to playlist-like results ────────
+    try:
+        def _search_fallback():
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                # Search for "<query> playlist" to bias YouTube toward playlists
+                return ydl.extract_info(f"ytsearch{limit}:{q} playlist", download=False)
+        async with _SEARCH_SEMAPHORE:
+            info = await asyncio.wait_for(loop.run_in_executor(None, _search_fallback), timeout=15)
+
+        # In flat search, playlist results have _type="url" and an id starting with PL/RD etc.
+        results = _parse_playlist_entries(info)
         return {"query": q, "results": results}
     except asyncio.TimeoutError:
         raise HTTPException(status_code=504, detail="Playlist search timed out")
     except Exception as e:
-        log.exception("Playlist search error for query: %s", q)
+        log.exception("Playlist search fallback error for query: %s", q)
         raise HTTPException(status_code=500, detail=str(e))
 
 
