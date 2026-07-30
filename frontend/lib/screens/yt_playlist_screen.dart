@@ -118,8 +118,10 @@ class _YtPlaylistScreenState extends State<YtPlaylistScreen> {
 
       setState(() { _tracks = merged; _loading = false; });
     } on DioException catch (e) {
-      // If /playlist doesn't exist on this server, fall back to search
-      if (e.response?.statusCode == 404 ||
+      // Fall back to search if: endpoint missing, connection error, or
+      // 422 (id is not a real playlist ID — came from a video search result)
+      final status = e.response?.statusCode;
+      if (status == 404 || status == 422 ||
           e.type == DioExceptionType.connectionError) {
         await _fetchViaSearch();
       } else {

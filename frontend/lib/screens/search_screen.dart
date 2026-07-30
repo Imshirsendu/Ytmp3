@@ -86,9 +86,9 @@ class _SearchScreenState extends State<SearchScreen>
     setState(() { _playlistLoading = true; _playlistError = null; });
     try {
       final res = await _dio.get(
-        '$serverUrl/search',
+        '$serverUrl/search/playlists',
         queryParameters: {
-          'q':     '$query playlist',
+          'q':     query,
           'limit': 20,
         },
         options: Options(receiveTimeout: const Duration(seconds: 20)),

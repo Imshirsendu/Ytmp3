@@ -355,6 +355,53 @@ async def search_youtube(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/search/playlists")
+async def search_playlists(
+    q: str = Query(...),
+    limit: int = Query(10, ge=1, le=25),
+):
+    """Search YouTube for playlists (not videos). Returns playlist id, title, channel, thumbnail, video_count."""
+    if not q.strip():
+        raise HTTPException(status_code=400, detail="q parameter is required")
+
+    opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "skip_download": True,
+        "extract_flat": True,
+        **_cookie_opt(),
+    }
+
+    try:
+        loop = asyncio.get_event_loop()
+        def _search():
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                return ydl.extract_info(f"ytsearchplaylist{limit}:{q}", download=False)
+        async with _SEARCH_SEMAPHORE:
+            info = await asyncio.wait_for(loop.run_in_executor(None, _search), timeout=15)
+
+        results = []
+        for entry in (info.get("entries") or []):
+            if not entry:
+                continue
+            playlist_id = entry.get("id") or entry.get("playlist_id")
+            if not playlist_id:
+                continue
+            results.append({
+                "id":          playlist_id,
+                "title":       entry.get("title"),
+                "uploader":    entry.get("uploader") or entry.get("channel"),
+                "thumbnail":   entry.get("thumbnail"),
+                "video_count": entry.get("playlist_count") or entry.get("n_entries"),
+            })
+        return {"query": q, "results": results}
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="Playlist search timed out")
+    except Exception as e:
+        log.exception("Playlist search error for query: %s", q)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/info")
 async def get_info(url: str = Query(...)):
     opts = {"quiet": True, "no_warnings": True, "skip_download": True, **_cookie_opt()}
