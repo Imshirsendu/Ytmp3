@@ -4,6 +4,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/featured_playlist.dart';
 import '../models/search_result.dart';
@@ -33,25 +34,112 @@ class _FeaturedPlaylistScreenState extends State<FeaturedPlaylistScreen> {
   final _streaming  = <String>{};
   final _downloaded = <String>{};
 
+  // Cache key for this playlist's track metadata.
+  String get _cacheKey => 'playlist_cache_v1_${widget.playlist.id}';
+
+  // Only cache stable playlists — not trending or runtime-added YT playlists.
+  bool get _isCacheable =>
+      !widget.playlist.id.startsWith('yt_') &&
+      widget.playlist.id != 'trending_now';
+
   @override
   void initState() {
     super.initState();
-    _fetchTracks();
+    _loadWithCache();
   }
 
-  /// Fires all searchQueries in parallel, merges results, deduplicates by
-  /// normalized title so the same song from two queries only appears once.
-  Future<void> _fetchTracks() async {
-    setState(() { _loading = true; _error = null; });
+  // ── Cache helpers ──────────────────────────────────────────────────────────
 
-    final server = context.read<ServerProvider>();
-    if (!server.isOnline) {
-      setState(() { _loading = false; _error = 'Server is offline'; });
+  Future<void> _loadWithCache() async {
+    if (!_isCacheable) {
+      // Trending / dynamic playlists: always fetch fresh, no cache.
+      await _fetchTracks();
       return;
     }
 
+    // 1. Try to load from cache for instant display.
+    final cached = await _readCache();
+    if (cached != null && cached.isNotEmpty) {
+      setState(() {
+        _tracks  = cached;
+        _loading = false;
+      });
+      // 2. Refresh in background — update UI silently if tracks changed.
+      _refreshInBackground();
+    } else {
+      // No cache yet — show spinner and fetch normally.
+      await _fetchTracks();
+    }
+  }
+
+  Future<List<SearchResult>?> _readCache() async {
     try {
-      // Fire every query concurrently
+      final prefs = await SharedPreferences.getInstance();
+      final raw   = prefs.getString(_cacheKey);
+      if (raw == null) return null;
+      final list  = jsonDecode(raw) as List;
+      return list
+          .map((e) => SearchResult.fromJson(e as Map<String, dynamic>))
+          .toList();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _writeCache(List<SearchResult> tracks) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      // Serialise only the metadata fields we need — no stream/download URLs.
+      final list = tracks.map((t) => {
+        'id':       t.id,
+        'title':    t.title,
+        'uploader': t.uploader,
+        'url':      t.url,
+        'thumbnail': t.thumbnail,
+        'duration': t.duration,
+      }).toList();
+      await prefs.setString(_cacheKey, jsonEncode(list));
+    } catch (_) {}
+  }
+
+  Future<void> _refreshInBackground() async {
+    final fresh = await _fetchTracksRaw();
+    if (fresh == null || !mounted) return;
+    // Only update UI if the track list actually changed.
+    final changed = fresh.length != _tracks.length ||
+        fresh.first.id != _tracks.first.id;
+    if (changed) {
+      setState(() => _tracks = fresh);
+    }
+    await _writeCache(fresh);
+  }
+
+  /// Called on retry or first open when no cache exists.
+  Future<void> _fetchTracks() async {
+    setState(() { _loading = true; _error = null; });
+    final fresh = await _fetchTracksRaw();
+    if (!mounted) return;
+    if (fresh != null) {
+      setState(() { _tracks = fresh; _loading = false; });
+      if (_isCacheable) await _writeCache(fresh);
+    } else {
+      setState(() {
+        _loading = false;
+        _error = context.read<ServerProvider>().isOnline
+            ? 'Failed to load tracks'
+            : 'Server is offline';
+      });
+    }
+  }
+
+  /// Pure fetch — no setState, returns null on failure.
+  /// Fires all searchQueries in parallel, merges & deduplicates by
+  /// normalised title so the same song from two queries only appears once.
+  Future<List<SearchResult>?> _fetchTracksRaw() async {
+    final server = context.read<ServerProvider>();
+    if (!server.isOnline) return null;
+
+    try {
       final futures = widget.playlist.searchQueries.map((q) async {
         try {
           final res = await _dio.get(
@@ -66,37 +154,28 @@ class _FeaturedPlaylistScreenState extends State<FeaturedPlaylistScreen> {
               .map((e) => SearchResult.fromJson(e as Map<String, dynamic>))
               .toList();
         } catch (_) {
-          // If one query fails, skip it — others still contribute
           return <SearchResult>[];
         }
       });
 
       final results = await Future.wait(futures);
 
-      // Flatten, filter, deduplicate
-      final seen = <String>{};
+      final seen   = <String>{};
       final merged = <SearchResult>[];
 
       for (final batch in results) {
         for (final track in batch) {
-          // Skip mashups / jukeboxes (> 20 min)
           if (track.duration != null && track.duration! > 1200) continue;
-
-          // Normalize: lowercase, strip punctuation and common suffixes
           final normalized = _normalize(track.title);
           if (seen.contains(normalized)) continue;
-
           seen.add(normalized);
           merged.add(track);
         }
       }
 
-      setState(() {
-        _tracks  = merged;
-        _loading = false;
-      });
-    } catch (e) {
-      setState(() { _loading = false; _error = e.toString(); });
+      return merged;
+    } catch (_) {
+      return null;
     }
   }
 
