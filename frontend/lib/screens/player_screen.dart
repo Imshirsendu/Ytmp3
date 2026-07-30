@@ -465,10 +465,10 @@ class _EqSheet extends StatelessWidget {
     final player = context.watch<PlayerProvider>();
 
     return Padding(
-      // Bottom padding uses MediaQuery viewInsets so the sheet clears the
-      // system nav bar even on devices where useSafeArea isn't enough.
+      // Use the safe-area bottom inset (home indicator / nav bar) plus extra
+      // breathing room so the chips are never flush against the screen edge.
       padding: EdgeInsets.fromLTRB(
-          24, 20, 24, 32 + MediaQuery.of(context).viewInsets.bottom),
+          24, 20, 24, 32 + MediaQuery.of(context).padding.bottom),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,

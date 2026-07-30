@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
+import '../providers/library_provider.dart';
+import '../providers/player_provider.dart';
 import 'download_screen.dart';
 import 'library_screen.dart';
 import 'search_screen.dart';
@@ -13,12 +16,61 @@ class MainShell extends StatefulWidget {
 
 class _MainShellState extends State<MainShell> {
   int _tab = 0;
+  bool _resumeChecked = false;
 
   static const _screens = [
     SearchScreen(),
     DownloadScreen(),
     LibraryScreen(),
   ];
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!_resumeChecked) {
+      _resumeChecked = true;
+      _checkResume();
+    }
+  }
+
+  Future<void> _checkResume() async {
+    final session = await PlayerProvider.loadLastSession();
+    if (session == null || !mounted) return;
+
+    // Look up the Track from the library by filePath.
+    final lib   = context.read<LibraryProvider>();
+    final match = lib.tracks.where((t) => t.filePath == session.filePath);
+    if (match.isEmpty || !mounted) return;
+    final track = match.first;
+
+    // Show a resume snackbar with an action button.
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 8),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Resume where you left off?',
+                style: TextStyle(fontWeight: FontWeight.w600)),
+            Text(
+              session.title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 12),
+            ),
+          ],
+        ),
+        action: SnackBarAction(
+          label: 'Resume',
+          onPressed: () {
+            if (!mounted) return;
+            context.read<PlayerProvider>().resumeSession(session, track);
+          },
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -37,8 +89,37 @@ class _MainShellState extends State<MainShell> {
           insetPadding: const EdgeInsets.fromLTRB(12, 0, 12, 72),
         ),
       ),
-      child: Scaffold(
-        body: IndexedStack(index: _tab, children: _screens),
+      child: PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, _) async {
+          if (didPop) return;
+          final shouldExit = await showDialog<bool>(
+            context: context,
+            builder: (_) => AlertDialog(
+              backgroundColor: const Color(0xFF1A1A2E),
+              title: const Text('Exit app?'),
+              content: const Text('Are you sure you want to exit?'),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('No'),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  child: const Text(
+                    'Yes',
+                    style: TextStyle(color: Colors.red),
+                  ),
+                ),
+              ],
+            ),
+          );
+          if (shouldExit == true && context.mounted) {
+            Navigator.of(context).pop();
+          }
+        },
+        child: Scaffold(
+          body: IndexedStack(index: _tab, children: _screens),
         bottomNavigationBar: NavigationBar(
           selectedIndex: _tab,
           backgroundColor: Theme.of(context).colorScheme.surface,
@@ -60,6 +141,7 @@ class _MainShellState extends State<MainShell> {
               label: 'Library',
             ),
           ],
+        ),
         ),
       ),
     );
